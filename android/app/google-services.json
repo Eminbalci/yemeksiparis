@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "130848354357",
+    "project_id": "yemektarifleri-b8557",
+    "storage_bucket": "yemektarifleri-b8557.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:130848354357:android:22136671f284256c76c17c",
+        "android_client_info": {
+          "package_name": "com.example.yemektarifiapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDgE47mUYxDcVeLBbZPQHgD3tVy_-UQC1U"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
