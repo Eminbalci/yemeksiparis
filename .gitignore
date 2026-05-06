@@ -43,3 +43,12 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# ── Firebase credentials ─────────────────────────────────────────────────────
+# firebase_options.dart contains real API keys and must NEVER be committed.
+# Run `flutterfire configure` locally to regenerate it, or copy from
+# lib/firebase_options.dart.local (which is also gitignored).
+lib/firebase_options.dart
+lib/firebase_options.dart.local
+*.local
+# ─────────────────────────────────────────────────────────────────────────────

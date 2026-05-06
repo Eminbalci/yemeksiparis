@@ -4,6 +4,8 @@ import 'package:google_fonts/google_fonts.dart';
 import '../models/models.dart';
 import '../services/firebase_service.dart';
 import 'login_screen.dart';
+import 'restaurant_dashboard.dart';
+import 'live_support_screen.dart';
 
 class CustomerDashboard extends StatefulWidget {
   const CustomerDashboard({super.key});
@@ -16,6 +18,16 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
   int _currentTab = 0; // 0: Menu, 1: Orders
   String _searchQuery = "";
   String _selectedCategory = "Hepsi";
+
+  TextEditingController? _phoneController;
+  TextEditingController? _addressController;
+
+  @override
+  void dispose() {
+    _phoneController?.dispose();
+    _addressController?.dispose();
+    super.dispose();
+  }
 
   // Shopping Cart state
   final Map<String, OrderItem> _cart = {};
@@ -103,6 +115,10 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
 
   // Show sliding shopping cart modal
   void _showCartSheet() {
+    DiscountCode? appliedDiscount;
+    String discountError = "";
+    final TextEditingController couponController = TextEditingController();
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -111,15 +127,20 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
         return StatefulBuilder(
           builder: (context, setModalState) {
             final double subtotal = _cartTotal;
-            final double deliveryFee = subtotal > 200 || subtotal == 0 ? 0 : 30;
-            final double total = subtotal + deliveryFee;
+            double discountAmount = 0.0;
+            if (appliedDiscount != null) {
+              discountAmount = appliedDiscount!.calculateDiscount(subtotal);
+            }
+            final double finalSubtotal = (subtotal - discountAmount) < 0 ? 0 : (subtotal - discountAmount);
+            final double deliveryFee = finalSubtotal > 200 || finalSubtotal == 0 ? 0 : 30;
+            final double total = finalSubtotal + deliveryFee;
 
             return Container(
-              height: MediaQuery.of(context).size.height * 0.75,
+              height: MediaQuery.of(context).size.height * 0.82,
               decoration: BoxDecoration(
                 color: Theme.of(context).cardColor,
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-                border: Border.all(color: Colors.white.withOpacity(0.05)),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
               ),
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
               child: Column(
@@ -163,7 +184,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Icon(Icons.shopping_cart_outlined, size: 64, color: Colors.white24),
+                                const Icon(Icons.shopping_cart_outlined, size: 64, color: Colors.white24),
                                 const SizedBox(height: 16),
                                 Text(
                                   "Sepetiniz henüz boş.",
@@ -221,7 +242,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                                   // Quantity increment/decrement buttons
                                   Container(
                                     decoration: BoxDecoration(
-                                      color: Colors.white.withOpacity(0.05),
+                                      color: Colors.white.withValues(alpha: 0.05),
                                       borderRadius: BorderRadius.circular(12),
                                     ),
                                     child: Row(
@@ -258,7 +279,62 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                   // Checkout Summary & Action Buttons
                   if (_cart.isNotEmpty) ...[
                     const Divider(color: Colors.white12),
+                    const SizedBox(height: 8),
+
+                    // Discount Code Input
+                    Row(
+                      children: [
+                        Expanded(
+                          child: SizedBox(
+                            height: 42,
+                            child: TextField(
+                              controller: couponController,
+                              style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
+                              decoration: InputDecoration(
+                                hintText: "İndirim Kodu Girin",
+                                hintStyle: GoogleFonts.outfit(color: Colors.white30, fontSize: 13),
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 14),
+                                filled: true,
+                                fillColor: Colors.white.withValues(alpha: 0.04),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: BorderSide.none,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton(
+                          onPressed: () async {
+                            final code = couponController.text.trim();
+                            if (code.isEmpty) return;
+                            final dc = await FirebaseService.validateDiscountCode(code, subtotal);
+                            setModalState(() {
+                              if (dc != null) {
+                                appliedDiscount = dc;
+                                discountError = "";
+                              } else {
+                                discountError = "Geçersiz kod veya alt limite ulaşılmadı.";
+                              }
+                            });
+                          },
+                          style: ElevatedButton.styleFrom(
+                            minimumSize: const Size(80, 42),
+                            padding: EdgeInsets.zero,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                          child: Text("Uygula", style: GoogleFonts.outfit(fontSize: 12, fontWeight: FontWeight.bold)),
+                        ),
+                      ],
+                    ),
+                    if (discountError.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4, left: 4),
+                        child: Text(discountError, style: GoogleFonts.outfit(color: Colors.redAccent, fontSize: 11)),
+                      ),
                     const SizedBox(height: 12),
+
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -266,6 +342,38 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                         Text("${subtotal.toStringAsFixed(0)} TL", style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w500)),
                       ],
                     ),
+                    if (appliedDiscount != null) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.tag, color: Colors.greenAccent, size: 16),
+                              const SizedBox(width: 4),
+                              Text(
+                                "İndirim (${appliedDiscount!.code})",
+                                style: GoogleFonts.outfit(color: Colors.greenAccent, fontWeight: FontWeight.w500),
+                              ),
+                              IconButton(
+                                constraints: const BoxConstraints(),
+                                padding: const EdgeInsets.only(left: 4),
+                                icon: const Icon(Icons.cancel, color: Colors.white30, size: 16),
+                                onPressed: () {
+                                  setModalState(() {
+                                    appliedDiscount = null;
+                                  });
+                                },
+                              ),
+                            ],
+                          ),
+                          Text(
+                            "-${discountAmount.toStringAsFixed(0)} TL",
+                            style: GoogleFonts.outfit(color: Colors.greenAccent, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ],
                     const SizedBox(height: 8),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -413,8 +521,8 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
               color: isCompleted
                   ? color
                   : isActive
-                      ? color.withOpacity(0.2)
-                      : Colors.white.withOpacity(0.05),
+                      ? color.withValues(alpha: 0.2)
+                      : Colors.white.withValues(alpha: 0.05),
               border: Border.all(
                 color: isCompleted || isActive ? color : Colors.white24,
                 width: 1.5,
@@ -422,7 +530,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
               boxShadow: isActive
                   ? [
                       BoxShadow(
-                        color: color.withOpacity(0.3),
+                        color: color.withValues(alpha: 0.3),
                         blurRadius: 10,
                         spreadRadius: 1,
                       )
@@ -487,7 +595,9 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
       ),
       body: _currentTab == 0
           ? _buildMenuTab(theme, greetingName)
-          : _buildOrdersTab(theme),
+          : _currentTab == 1
+              ? _buildOrdersTab(theme)
+              : _buildProfileTab(theme),
       
       // Floating cart indicator badge
       floatingActionButton: _cart.isNotEmpty
@@ -526,7 +636,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
       // Bottom Navigation Bar
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
-          border: Border(top: BorderSide(color: Colors.white.withOpacity(0.05))),
+          border: Border(top: BorderSide(color: Colors.white.withValues(alpha: 0.05))),
         ),
         child: BottomNavigationBar(
           currentIndex: _currentTab,
@@ -550,6 +660,11 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
               activeIcon: Icon(Icons.receipt_long_rounded),
               label: "Siparişlerim",
             ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.person_outline_rounded),
+              activeIcon: Icon(Icons.person_rounded),
+              label: "Profilim",
+            ),
           ],
         ),
       ),
@@ -558,6 +673,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
 
   // Builder for Menu Tab (Listing all tasty dishes)
   Widget _buildMenuTab(ThemeData theme, String userName) {
+    final user = FirebaseService.currentUser;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -604,46 +720,125 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
           ),
         ),
 
-        // Horizontal Category Pill Widgets
-        SizedBox(
-          height: 56,
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            physics: const BouncingScrollPhysics(),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            itemCount: _categories.length,
-            itemBuilder: (context, index) {
-              final cat = _categories[index];
-              final isSelected = _selectedCategory == cat;
-              return Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4.0),
-                child: ChoiceChip(
-                  label: Text(
-                    cat,
-                    style: GoogleFonts.outfit(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                      color: isSelected ? Colors.white : Colors.white60,
-                    ),
-                  ),
-                  selected: isSelected,
-                  selectedColor: theme.primaryColor,
-                  backgroundColor: theme.cardColor,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    side: BorderSide(
-                      color: isSelected ? theme.primaryColor : Colors.white.withOpacity(0.05),
-                    ),
-                  ),
-                  onSelected: (selected) {
-                    setState(() {
-                      _selectedCategory = cat;
-                    });
-                  },
+        // Nearby Restaurants Section
+        if (user != null && FirebaseService.getNearbyRestaurants(user.address).isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  "📍 Yakınınızdaki Restoranlar",
+                  style: GoogleFonts.outfit(fontSize: 13, fontWeight: FontWeight.bold, color: const Color(0xFF10B981)),
                 ),
-              );
-            },
+                Text(
+                  "${FirebaseService.getNearbyRestaurants(user.address).length} Aktif",
+                  style: GoogleFonts.outfit(fontSize: 11, color: Colors.white38),
+                ),
+              ],
+            ),
           ),
+          SizedBox(
+            height: 95,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              physics: const BouncingScrollPhysics(),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              itemCount: FirebaseService.getNearbyRestaurants(user.address).length,
+              itemBuilder: (context, idx) {
+                final r = FirebaseService.getNearbyRestaurants(user.address)[idx];
+                return Container(
+                  width: 180,
+                  margin: const EdgeInsets.symmetric(horizontal: 4),
+                  decoration: BoxDecoration(
+                    color: theme.cardColor,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: const Color(0xFF10B981).withValues(alpha: 0.15)),
+                  ),
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        r.restaurantName.isNotEmpty ? r.restaurantName : r.fullName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.outfit(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        r.restaurantAddress.isNotEmpty ? r.restaurantAddress : "Adres bilgisi yok",
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.outfit(fontSize: 10, color: Colors.white38),
+                      ),
+                      const SizedBox(height: 5),
+                      Row(
+                        children: [
+                          const Icon(Icons.delivery_dining, size: 12, color: Color(0xFF10B981)),
+                          const SizedBox(width: 4),
+                          Text(
+                            "Yakın konumda",
+                            style: GoogleFonts.outfit(fontSize: 9, color: const Color(0xFF10B981), fontWeight: FontWeight.w600),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
+
+        // Horizontal Category Pill Widgets
+        StreamBuilder<List<String>>(
+          stream: FirebaseService.streamCategories(),
+          builder: (context, catSnapshot) {
+            final dynamicCats = ["Hepsi", ...(catSnapshot.data ?? ["Çorba", "Ana Yemek", "Tatlı", "İçecek"])];
+            return SizedBox(
+              height: 56,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                physics: const BouncingScrollPhysics(),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                itemCount: dynamicCats.length,
+                itemBuilder: (context, index) {
+                  final cat = dynamicCats[index];
+                  final isSelected = _selectedCategory == cat;
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                    child: ChoiceChip(
+                      label: Text(
+                        cat,
+                        style: GoogleFonts.outfit(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                          color: isSelected ? Colors.white : Colors.white60,
+                        ),
+                      ),
+                      selected: isSelected,
+                      selectedColor: theme.primaryColor,
+                      backgroundColor: theme.cardColor,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: BorderSide(
+                          color: isSelected ? theme.primaryColor : Colors.white.withValues(alpha: 0.05),
+                        ),
+                      ),
+                      onSelected: (selected) {
+                        setState(() {
+                          _selectedCategory = cat;
+                        });
+                      },
+                    ),
+                  );
+                },
+              ),
+            );
+          },
         ),
 
         // Main Food List Grid
@@ -702,7 +897,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                     decoration: BoxDecoration(
                       color: theme.cardColor,
                       borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: Colors.white.withOpacity(0.04)),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
                     ),
                     clipBehavior: Clip.antiAlias,
                     child: Column(
@@ -728,7 +923,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                                 child: Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                   decoration: BoxDecoration(
-                                    color: Colors.black.withOpacity(0.65),
+                                    color: Colors.black.withValues(alpha: 0.65),
                                     borderRadius: BorderRadius.circular(10),
                                   ),
                                   child: Row(
@@ -749,7 +944,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                                 child: Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                   decoration: BoxDecoration(
-                                    color: theme.primaryColor.withOpacity(0.85),
+                                    color: theme.primaryColor.withValues(alpha: 0.85),
                                     borderRadius: BorderRadius.circular(10),
                                   ),
                                   child: Text(
@@ -798,7 +993,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                                       child: Container(
                                         padding: const EdgeInsets.all(6),
                                         decoration: BoxDecoration(
-                                          color: theme.primaryColor.withOpacity(0.12),
+                                          color: theme.primaryColor.withValues(alpha: 0.12),
                                           shape: BoxShape.circle,
                                         ),
                                         child: Icon(Icons.add, size: 18, color: theme.primaryColor),
@@ -881,7 +1076,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
               decoration: BoxDecoration(
                 color: theme.cardColor,
                 borderRadius: BorderRadius.circular(22),
-                border: Border.all(color: Colors.white.withOpacity(0.04)),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
               ),
               padding: const EdgeInsets.all(18),
               child: Column(
@@ -992,6 +1187,536 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
           },
         );
       },
+    );
+  }
+
+  // Show Address Editor Sheet (for Add or Edit)
+  void _showAddressEditorSheet(DeliveryAddress? existingAddress) {
+    final titleController = TextEditingController(text: existingAddress?.title ?? "");
+    final addressController = TextEditingController(text: existingAddress?.fullAddress ?? "");
+    final phoneController = TextEditingController(text: existingAddress?.phone ?? "");
+    final formKey = GlobalKey<FormState>();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return Padding(
+          padding: MediaQuery.of(context).viewInsets,
+          child: Container(
+            height: 380,
+            decoration: BoxDecoration(
+              color: Theme.of(context).cardColor,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+            ),
+            padding: const EdgeInsets.all(24),
+            child: Form(
+              key: formKey,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.location_on_rounded, color: Theme.of(context).primaryColor, size: 24),
+                      const SizedBox(width: 8),
+                      Text(
+                        existingAddress == null ? "Yeni Adres Ekle" : "Adresi Düzenle",
+                        style: GoogleFonts.outfit(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                      ),
+                    ],
+                  ),
+                  const Divider(color: Colors.white12, height: 20),
+                  Expanded(
+                    child: ListView(
+                      children: [
+                        TextFormField(
+                          controller: titleController,
+                          style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
+                          decoration: const InputDecoration(
+                            labelText: "Adres Başlığı (Örn: Ev, İş)",
+                          ),
+                          validator: (v) => v == null || v.trim().isEmpty ? "Başlık gerekli" : null,
+                        ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: addressController,
+                          style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
+                          decoration: const InputDecoration(
+                            labelText: "Açık Adres (Mahalle, Sokak, No, İlçe/İl)",
+                          ),
+                          validator: (v) => v == null || v.trim().isEmpty ? "Adres gerekli" : null,
+                        ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: phoneController,
+                          keyboardType: TextInputType.phone,
+                          style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
+                          decoration: const InputDecoration(
+                            labelText: "İrtibat Telefonu",
+                          ),
+                          validator: (v) => v == null || v.trim().isEmpty ? "Telefon gerekli" : null,
+                        ),
+                      ],
+                    ),
+                  ),
+                  ElevatedButton(
+                    onPressed: () async {
+                      if (!formKey.currentState!.validate()) return;
+                      final user = FirebaseService.currentUser;
+                      if (user == null) return;
+
+                      final addr = DeliveryAddress(
+                        id: existingAddress?.id ?? 'addr_${DateTime.now().millisecondsSinceEpoch}',
+                        title: titleController.text.trim(),
+                        fullAddress: addressController.text.trim(),
+                        phone: phoneController.text.trim(),
+                      );
+
+                      await FirebaseService.saveAddress(user.uid, addr);
+                      if (context.mounted) {
+                        Navigator.pop(context);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text("Adres başarıyla kaydedildi!", style: GoogleFonts.outfit(fontWeight: FontWeight.bold, color: Colors.black)),
+                            backgroundColor: Theme.of(context).primaryColor,
+                          ),
+                        );
+                      }
+                    },
+                    child: const Text("Adresi Kaydet"),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // Builder for the stunning Profile & Switch dashboard tab
+  Widget _buildProfileTab(ThemeData theme) {
+    final user = FirebaseService.currentUser;
+    if (user == null) {
+      return Center(
+        child: Text("Profilinizi görüntülemek için giriş yapmalısınız.", style: GoogleFonts.outfit(color: Colors.white54)),
+      );
+    }
+
+    _phoneController ??= TextEditingController(text: user.phone);
+    _addressController ??= TextEditingController(text: user.address);
+
+    final bool canManage = user.role == 'admin' || user.role == 'restaurant_owner';
+    final String roleLabel = user.role == 'admin' 
+        ? 'Sistem Yöneticisi (Admin)' 
+        : user.role == 'restaurant_owner' 
+            ? 'Restoran Sahibi' 
+            : 'Müşteri';
+
+    return SingleChildScrollView(
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(24, 20, 24, 80),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Profile Card with Glowing Avatar
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: theme.cardColor,
+              borderRadius: BorderRadius.circular(28),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 72,
+                  height: 72,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      colors: [theme.primaryColor, theme.colorScheme.secondary],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                  ),
+                  child: Center(
+                    child: Text(
+                      user.fullName.isNotEmpty ? user.fullName[0].toUpperCase() : '?',
+                      style: GoogleFonts.outfit(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.white),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        user.fullName,
+                        style: GoogleFonts.outfit(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        user.email,
+                        style: GoogleFonts.outfit(fontSize: 13, color: Colors.white38),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: user.role == 'admin' 
+                              ? const Color(0xFFEF4444).withValues(alpha: 0.15)
+                              : user.role == 'restaurant_owner'
+                                  ? const Color(0xFF10B981).withValues(alpha: 0.15)
+                                  : Colors.white.withValues(alpha: 0.06),
+                          borderRadius: BorderRadius.circular(30),
+                        ),
+                        child: Text(
+                          roleLabel,
+                          style: GoogleFonts.outfit(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: user.role == 'admin' 
+                                ? const Color(0xFFF87171)
+                                : user.role == 'restaurant_owner'
+                                    ? const Color(0xFF34D399)
+                                    : Colors.white70,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+
+          // Glowing Support Session Launcher
+          GestureDetector(
+            onTap: () async {
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (_) => const Center(child: CupertinoActivityIndicator(radius: 14, color: Colors.white)),
+              );
+              final session = await FirebaseService.startChatSession();
+              if (mounted) Navigator.pop(context); // close loader
+              if (session != null && mounted) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => LiveSupportScreen(session: session)),
+                );
+              }
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF2563EB), Color(0xFF3B82F6)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF2563EB).withValues(alpha: 0.25),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  )
+                ],
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.support_agent_rounded, color: Colors.white, size: 24),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          "7/24 Canlı Destek",
+                          style: GoogleFonts.outfit(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white),
+                        ),
+                        Text(
+                          "Müşteri temsilcisiyle anında sohbet edin",
+                          style: GoogleFonts.outfit(fontSize: 11, color: Colors.white70),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white, size: 16),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
+
+          // Profile fields editable section
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: theme.cardColor,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "İletişim & Varsayılan Teslimat",
+                  style: GoogleFonts.outfit(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white),
+                ),
+                const Divider(color: Colors.white10, height: 20),
+                TextFormField(
+                  controller: _phoneController,
+                  keyboardType: TextInputType.phone,
+                  style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
+                  decoration: const InputDecoration(
+                    labelText: "Telefon Numarası",
+                    prefixIcon: Icon(Icons.phone_iphone_rounded, size: 16),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _addressController,
+                  maxLines: 2,
+                  style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
+                  decoration: const InputDecoration(
+                    labelText: "Genel Teslimat Adresi",
+                    prefixIcon: Icon(Icons.home_work_outlined, size: 16),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton(
+                  onPressed: () async {
+                    showDialog(
+                      context: context,
+                      barrierDismissible: false,
+                      builder: (_) => const Center(child: CupertinoActivityIndicator(radius: 14, color: Colors.white)),
+                    );
+                    final err = await FirebaseService.updateUserProfile(
+                      uid: user.uid,
+                      phone: _phoneController!.text.trim(),
+                      address: _addressController!.text.trim(),
+                    );
+                    if (mounted) Navigator.pop(context); // close loader
+                    if (mounted) {
+                      if (err != null) {
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+                      } else {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text("Profil bilgileri başarıyla güncellendi!", style: GoogleFonts.outfit(fontWeight: FontWeight.bold, color: Colors.black)),
+                            backgroundColor: theme.primaryColor,
+                          ),
+                        );
+                        setState(() {});
+                      }
+                    }
+                  },
+                  child: const Text("Bilgileri Güncelle"),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+
+          // Registered Delivery Addresses Section
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: theme.cardColor,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      "Kayıtlı Adreslerim",
+                      style: GoogleFonts.outfit(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => _showAddressEditorSheet(null),
+                      icon: const Icon(Icons.add, size: 14),
+                      label: Text("Ekle", style: GoogleFonts.outfit(fontSize: 12, fontWeight: FontWeight.bold)),
+                      style: TextButton.styleFrom(
+                        padding: EdgeInsets.zero,
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
+                  ],
+                ),
+                const Divider(color: Colors.white10, height: 20),
+                StreamBuilder<List<DeliveryAddress>>(
+                  stream: FirebaseService.streamAddresses(user.uid),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CupertinoActivityIndicator(radius: 10, color: Colors.white30));
+                    }
+                    final list = snapshot.data ?? [];
+                    if (list.isEmpty) {
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 12.0),
+                        child: Text(
+                          "Henüz kayıtlı bir adresiniz bulunmuyor.",
+                          style: GoogleFonts.outfit(fontSize: 11, color: Colors.white30),
+                        ),
+                      );
+                    }
+                    return ListView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: list.length,
+                      itemBuilder: (context, idx) {
+                        final addr = list[idx];
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.02),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(color: Colors.white.withValues(alpha: 0.03)),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.location_on_outlined, color: Colors.white30, size: 20),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Text(
+                                          addr.title,
+                                          style: GoogleFonts.outfit(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white),
+                                        ),
+                                        const Spacer(),
+                                        GestureDetector(
+                                          onTap: () => _showAddressEditorSheet(addr),
+                                          child: Icon(Icons.edit_outlined, color: theme.primaryColor, size: 15),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        GestureDetector(
+                                          onTap: () async {
+                                            await FirebaseService.deleteAddress(user.uid, addr.id);
+                                            if (context.mounted) {
+                                              ScaffoldMessenger.of(context).showSnackBar(
+                                                const SnackBar(content: Text("Adres silindi.")),
+                                              );
+                                            }
+                                          },
+                                          child: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 15),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      addr.fullAddress,
+                                      style: GoogleFonts.outfit(fontSize: 11, color: Colors.white54),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      addr.phone,
+                                      style: GoogleFonts.outfit(fontSize: 10, color: Colors.white30),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+
+          // Admin/Owner portal switch
+          if (canManage) ...[
+            GestureDetector(
+              onTap: () {
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(builder: (_) => const RestaurantDashboard()),
+                  (route) => false,
+                );
+              },
+              child: Container(
+                height: 56,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(20),
+                  gradient: LinearGradient(
+                    colors: [theme.primaryColor, theme.colorScheme.secondary],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.dashboard_customize_rounded, color: Colors.black, size: 20),
+                    const SizedBox(width: 8),
+                    Text(
+                      "Yönetim Paneline Geç",
+                      style: GoogleFonts.outfit(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 18),
+          ],
+
+          // App Settings & Logout Cards
+          Container(
+            decoration: BoxDecoration(
+              color: theme.cardColor,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
+            ),
+            child: Column(
+              children: [
+                _buildProfileItem(
+                  icon: Icons.logout_rounded,
+                  title: "Oturumu Kapat",
+                  color: Colors.redAccent,
+                  onTap: _handleSignOut,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProfileItem({
+    required IconData icon,
+    required String title,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return ListTile(
+      leading: Icon(icon, color: color, size: 22),
+      title: Text(
+        title,
+        style: GoogleFonts.outfit(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white),
+      ),
+      trailing: const Icon(Icons.chevron_right_rounded, color: Colors.white30, size: 20),
+      onTap: onTap,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
     );
   }
 }

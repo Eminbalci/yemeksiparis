@@ -81,7 +81,7 @@ class ThemeController extends ChangeNotifier {
             fontWeight: FontWeight.bold,
           ),
           elevation: 4,
-          shadowColor: primaryColor.withOpacity(0.3),
+          shadowColor: primaryColor.withValues(alpha: 0.3),
         ),
       ),
       textButtonTheme: TextButtonThemeData(
@@ -99,11 +99,11 @@ class ThemeController extends ChangeNotifier {
         contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
-          borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
+          borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
-          borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
+          borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
@@ -125,8 +125,8 @@ class ThemeController extends ChangeNotifier {
         displayMedium: GoogleFonts.outfit(fontWeight: FontWeight.bold, color: Colors.white),
         titleLarge: GoogleFonts.outfit(fontWeight: FontWeight.bold, color: Colors.white),
         titleMedium: GoogleFonts.outfit(fontWeight: FontWeight.w600, color: Colors.white),
-        bodyLarge: GoogleFonts.outfit(color: Colors.white.withOpacity(0.9)),
-        bodyMedium: GoogleFonts.outfit(color: Colors.white.withOpacity(0.65)),
+        bodyLarge: GoogleFonts.outfit(color: Colors.white.withValues(alpha: 0.9)),
+        bodyMedium: GoogleFonts.outfit(color: Colors.white.withValues(alpha: 0.65)),
         bodySmall: GoogleFonts.outfit(color: Colors.white54),
       ),
     );

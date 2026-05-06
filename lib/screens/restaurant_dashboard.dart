@@ -4,6 +4,8 @@ import 'package:google_fonts/google_fonts.dart';
 import '../models/models.dart';
 import '../services/firebase_service.dart';
 import 'login_screen.dart';
+import 'customer_dashboard.dart';
+import 'live_support_screen.dart';
 
 class RestaurantDashboard extends StatefulWidget {
   const RestaurantDashboard({super.key});
@@ -13,7 +15,10 @@ class RestaurantDashboard extends StatefulWidget {
 }
 
 class _RestaurantDashboardState extends State<RestaurantDashboard> {
-  int _currentTab = 0; // 0: Orders, 1: Menu, 2: Analytics
+  int _currentTab = 0;
+  int _managementSubTab = 0;   // 0: Şubeler, 1: İndirim Kodları, 2: Kategoriler
+  int _supportQueueSubTab = 0; // 0: Aktif Sohbetler, 1: Geçmiş
+  int _adminSuiteSubTab = 0;   // 0: Performans Analizi, 1: Yetki Kontrolleri
 
   // New Meal Form controllers
   final _addMealFormKey = GlobalKey<FormState>();
@@ -21,7 +26,7 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
   final _mealDescController = TextEditingController();
   final _mealPriceController = TextEditingController();
   final _mealImageController = TextEditingController();
-  String _selectedCategory = "Kebaplar";
+  String _selectedCategory = "Çorba";
 
   final List<String> _categories = [
     "Kebaplar",
@@ -77,7 +82,7 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
                 decoration: BoxDecoration(
                   color: Theme.of(context).cardColor,
                   borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-                  border: Border.all(color: Colors.white.withOpacity(0.05)),
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
                 ),
                 padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
                 child: Form(
@@ -169,32 +174,40 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
                               },
                             ),
                             const SizedBox(height: 14),
-
                             // Category
-                            Theme(
-                              data: Theme.of(context).copyWith(canvasColor: Theme.of(context).cardColor),
-                              child: DropdownButtonFormField<String>(
-                                initialValue: _selectedCategory,
-                                style: GoogleFonts.outfit(color: Colors.white, fontSize: 14),
-                                decoration: const InputDecoration(
-                                  labelText: "Kategori",
-                                  prefixIcon: Icon(Icons.category_outlined, size: 18, color: Colors.white54),
-                                ),
-                                icon: Icon(Icons.keyboard_arrow_down_rounded, color: Theme.of(context).primaryColor),
-                                items: _categories.map((String val) {
-                                  return DropdownMenuItem<String>(
-                                    value: val,
-                                    child: Text(val, style: GoogleFonts.outfit(color: Colors.white)),
-                                  );
-                                }).toList(),
-                                onChanged: (newVal) {
-                                  if (newVal != null) {
-                                    setModalState(() {
-                                      _selectedCategory = newVal;
-                                    });
-                                  }
-                                },
-                              ),
+                            StreamBuilder<List<String>>(
+                              stream: FirebaseService.streamCategories(),
+                              builder: (context, catSnap) {
+                                final List<String> dynCats = catSnap.data ?? ["Çorba", "Ana Yemek", "Tatlı", "İçecek"];
+                                if (dynCats.isNotEmpty && !dynCats.contains(_selectedCategory)) {
+                                  _selectedCategory = dynCats.first;
+                                }
+                                return Theme(
+                                  data: Theme.of(context).copyWith(canvasColor: Theme.of(context).cardColor),
+                                  child: DropdownButtonFormField<String>(
+                                    value: dynCats.contains(_selectedCategory) ? _selectedCategory : (dynCats.isNotEmpty ? dynCats.first : null),
+                                    style: GoogleFonts.outfit(color: Colors.white, fontSize: 14),
+                                    decoration: const InputDecoration(
+                                      labelText: "Kategori",
+                                      prefixIcon: Icon(Icons.category_outlined, size: 18, color: Colors.white54),
+                                    ),
+                                    icon: Icon(Icons.keyboard_arrow_down_rounded, color: Theme.of(context).primaryColor),
+                                    items: dynCats.map((String val) {
+                                      return DropdownMenuItem<String>(
+                                        value: val,
+                                        child: Text(val, style: GoogleFonts.outfit(color: Colors.white)),
+                                      );
+                                    }).toList(),
+                                    onChanged: (newVal) {
+                                      if (newVal != null) {
+                                        setModalState(() {
+                                          _selectedCategory = newVal;
+                                        });
+                                      }
+                                    },
+                                  ),
+                                );
+                              },
                             ),
                             const SizedBox(height: 14),
 
@@ -371,6 +384,7 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final bool isAdmin = FirebaseService.currentUser?.role == 'admin';
 
     return Scaffold(
       appBar: AppBar(
@@ -386,6 +400,16 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
           ],
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.restaurant_rounded, color: Colors.white70, size: 22),
+            tooltip: "Sipariş Paneli (Yemek Sipariş Et)",
+            onPressed: () {
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const CustomerDashboard()),
+                (route) => false,
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.logout_rounded, color: Colors.white54, size: 22),
             tooltip: "Çıkış Yap",
@@ -413,12 +437,26 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
                 }
               }
 
-              if (_currentTab == 0) {
-                return _buildOrdersTab(theme, orders);
-              } else if (_currentTab == 1) {
-                return _buildMenuTab(theme, meals);
+              if (isAdmin) {
+                if (_currentTab == 0) {
+                  return _buildSupportQueueTab(theme);
+                } else if (_currentTab == 1) {
+                  return _buildAdminSuiteTab(theme, totalRevenue, activeOrders, meals.length);
+                } else {
+                  return _buildSupportQueueTab(theme);
+                }
               } else {
-                return _buildAnalyticsTab(theme, totalRevenue, activeOrders, meals.length);
+                if (_currentTab == 0) {
+                  return _buildOrdersTab(theme, orders);
+                } else if (_currentTab == 1) {
+                  return _buildMenuTab(theme, meals);
+                } else if (_currentTab == 2) {
+                  return _buildManagementTab(theme);
+                } else if (_currentTab == 3) {
+                  return _buildAnalyticsTab(theme, totalRevenue, activeOrders, meals.length);
+                } else {
+                  return _buildOrdersTab(theme, orders);
+                }
               }
             },
           );
@@ -426,7 +464,7 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
       ),
 
       // Floating Add Meal Action button shown on Menu Tab
-      floatingActionButton: _currentTab == 1
+      floatingActionButton: (!isAdmin && _currentTab == 1)
           ? FloatingActionButton(
               onPressed: _showAddMealSheet,
               backgroundColor: theme.primaryColor,
@@ -439,36 +477,54 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
       // Restaurant Bottom Navigation
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
-          border: Border(top: BorderSide(color: Colors.white.withOpacity(0.05))),
+          border: Border(top: BorderSide(color: Colors.white.withValues(alpha: 0.05))),
         ),
         child: BottomNavigationBar(
-          currentIndex: _currentTab,
+          currentIndex: _currentTab >= (isAdmin ? 2 : 4) ? 0 : _currentTab,
           onTap: (index) => setState(() => _currentTab = index),
           backgroundColor: theme.scaffoldBackgroundColor,
           selectedItemColor: theme.primaryColor,
           unselectedItemColor: Colors.white30,
           showSelectedLabels: true,
           showUnselectedLabels: true,
-          selectedLabelStyle: GoogleFonts.outfit(fontSize: 12, fontWeight: FontWeight.bold),
-          unselectedLabelStyle: GoogleFonts.outfit(fontSize: 12),
+          selectedLabelStyle: GoogleFonts.outfit(fontSize: 11, fontWeight: FontWeight.bold),
+          unselectedLabelStyle: GoogleFonts.outfit(fontSize: 11),
           type: BottomNavigationBarType.fixed,
-          items: const [
-            BottomNavigationBarItem(
-              icon: Icon(Icons.delivery_dining_outlined),
-              activeIcon: Icon(Icons.delivery_dining),
-              label: "Siparişler",
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.restaurant_menu_outlined),
-              activeIcon: Icon(Icons.restaurant_menu),
-              label: "Menü Kartı",
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.bar_chart_outlined),
-              activeIcon: Icon(Icons.bar_chart_rounded),
-              label: "Gelir Analizi",
-            ),
-          ],
+          items: isAdmin
+              ? const [
+                  BottomNavigationBarItem(
+                    icon: Icon(Icons.support_agent_outlined),
+                    activeIcon: Icon(Icons.support_agent_rounded),
+                    label: "Canlı Destek",
+                  ),
+                  BottomNavigationBarItem(
+                    icon: Icon(Icons.admin_panel_settings_outlined),
+                    activeIcon: Icon(Icons.admin_panel_settings_rounded),
+                    label: "Yönetici Paneli",
+                  ),
+                ]
+              : const [
+                  BottomNavigationBarItem(
+                    icon: Icon(Icons.delivery_dining_outlined),
+                    activeIcon: Icon(Icons.delivery_dining),
+                    label: "Siparişler",
+                  ),
+                  BottomNavigationBarItem(
+                    icon: Icon(Icons.restaurant_menu_outlined),
+                    activeIcon: Icon(Icons.restaurant_menu),
+                    label: "Menü Kartı",
+                  ),
+                  BottomNavigationBarItem(
+                    icon: Icon(Icons.storefront_outlined),
+                    activeIcon: Icon(Icons.storefront_rounded),
+                    label: "Şube/Kupon",
+                  ),
+                  BottomNavigationBarItem(
+                    icon: Icon(Icons.bar_chart_outlined),
+                    activeIcon: Icon(Icons.bar_chart_rounded),
+                    label: "Gelir",
+                  ),
+                ],
         ),
       ),
     );
@@ -525,7 +581,7 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
           decoration: BoxDecoration(
             color: theme.cardColor,
             borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: Colors.white.withOpacity(0.04)),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
           ),
           padding: const EdgeInsets.all(18),
           child: Column(
@@ -552,9 +608,9 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                     decoration: BoxDecoration(
-                      color: statusColor.withOpacity(0.12),
+                      color: statusColor.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: statusColor.withOpacity(0.3)),
+                      border: Border.all(color: statusColor.withValues(alpha: 0.3)),
                     ),
                     child: Text(
                       statusLabel,
@@ -660,7 +716,7 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
           decoration: BoxDecoration(
             color: theme.cardColor,
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: Colors.white.withOpacity(0.04)),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
           ),
           clipBehavior: Clip.antiAlias,
           child: Row(
@@ -708,7 +764,7 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                             decoration: BoxDecoration(
-                              color: theme.colorScheme.secondary.withOpacity(0.12),
+                              color: theme.colorScheme.secondary.withValues(alpha: 0.12),
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: Text(
@@ -810,7 +866,7 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
             decoration: BoxDecoration(
               color: theme.cardColor,
               borderRadius: BorderRadius.circular(22),
-              border: Border.all(color: Colors.white.withOpacity(0.04)),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
             ),
             padding: const EdgeInsets.all(20),
             child: Column(
@@ -820,7 +876,7 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
                   child: CustomPaint(
                     painter: RevenueLinePainter(
                       color: theme.primaryColor,
-                      glowColor: theme.primaryColor.withOpacity(0.4),
+                      glowColor: theme.primaryColor.withValues(alpha: 0.4),
                     ),
                   ),
                 ),
@@ -851,7 +907,7 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
       decoration: BoxDecoration(
         color: theme.cardColor,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withOpacity(0.04)),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
       ),
       padding: const EdgeInsets.all(18),
       child: Column(
@@ -888,6 +944,1375 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
       style: GoogleFonts.outfit(fontSize: 11, color: Colors.white38, fontWeight: FontWeight.w500),
     );
   }
+  Widget _buildUsersTab(ThemeData theme) {
+    return StreamBuilder<List<UserModel>>(
+      stream: FirebaseService.streamUsers(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CupertinoActivityIndicator(radius: 12, color: Colors.white));
+        }
+
+        if (snapshot.hasError) {
+          return Center(child: Text("Hata: ${snapshot.error}", style: const TextStyle(color: Colors.redAccent)));
+        }
+
+        final users = snapshot.data ?? [];
+        final currentUserUid = FirebaseService.currentUser?.uid;
+
+        // Filter out current user from being updated by themselves to prevent accidental lockouts
+        final otherUsers = users.where((u) => u.uid != currentUserUid).toList();
+
+        if (otherUsers.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.people_outline_rounded, size: 64, color: Colors.white12),
+                const SizedBox(height: 16),
+                Text(
+                  "Sistemde yetkilendirilecek başka kullanıcı bulunmuyor.",
+                  style: GoogleFonts.outfit(color: Colors.white38, fontSize: 14),
+                ),
+              ],
+            ),
+          );
+        }
+
+        return ListView.builder(
+          physics: const BouncingScrollPhysics(),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          itemCount: otherUsers.length,
+          itemBuilder: (context, index) {
+            final user = otherUsers[index];
+            final String roleText = user.role == 'admin'
+                ? 'Admin'
+                : user.role == 'restaurant_owner'
+                    ? 'Restoran Sahibi'
+                    : 'Müşteri';
+            
+            final Color roleColor = user.role == 'admin'
+                ? const Color(0xFFEF4444)
+                : user.role == 'restaurant_owner'
+                    ? const Color(0xFF10B981)
+                    : Colors.white30;
+
+            return Container(
+              margin: const EdgeInsets.only(bottom: 14),
+              decoration: BoxDecoration(
+                color: theme.cardColor,
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
+              ),
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  // User avatar
+                  Container(
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: roleColor.withValues(alpha: 0.12),
+                    ),
+                    child: Center(
+                      child: Text(
+                        user.fullName.isNotEmpty ? user.fullName[0].toUpperCase() : '?',
+                        style: GoogleFonts.outfit(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: roleColor == Colors.white30 ? Colors.white : roleColor,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+
+                  // User details
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          user.fullName,
+                          style: GoogleFonts.outfit(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          user.email,
+                          style: GoogleFonts.outfit(color: Colors.white38, fontSize: 12),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: roleColor.withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            roleText,
+                            style: GoogleFonts.outfit(
+                              fontSize: 10, 
+                              fontWeight: FontWeight.bold, 
+                              color: roleColor == Colors.white30 ? Colors.white70 : roleColor,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // Role modifier PopupMenu
+                  PopupMenuButton<String>(
+                    icon: Icon(Icons.more_vert, color: theme.primaryColor),
+                    color: theme.cardColor,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    onSelected: (String newRole) async {
+                      final error = await FirebaseService.updateUserRole(user.uid, newRole);
+                      if (context.mounted) {
+                        if (error != null) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text("Hata: $error", style: GoogleFonts.outfit(color: Colors.white)),
+                              backgroundColor: Colors.redAccent,
+                            ),
+                          );
+                        } else {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text("${user.fullName} yetkisi güncellendi!", style: GoogleFonts.outfit(fontWeight: FontWeight.w600, color: Colors.black)),
+                              backgroundColor: theme.primaryColor,
+                              behavior: SnackBarBehavior.floating,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              margin: const EdgeInsets.all(16),
+                            ),
+                          );
+                        }
+                      }
+                    },
+                    itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+                      PopupMenuItem<String>(
+                        value: 'customer',
+                        child: Row(
+                          children: [
+                            const Icon(Icons.person_outline, size: 18, color: Colors.white54),
+                            const SizedBox(width: 10),
+                            Text("Müşteri Yap", style: GoogleFonts.outfit(color: Colors.white70)),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem<String>(
+                        value: 'restaurant_owner',
+                        child: Row(
+                          children: [
+                            const Icon(Icons.restaurant_menu, size: 18, color: Color(0xFF10B981)),
+                            const SizedBox(width: 10),
+                            Text("Restoran Sahibi Yap", style: GoogleFonts.outfit(color: Colors.white70)),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem<String>(
+                        value: 'admin',
+                        child: Row(
+                          children: [
+                            const Icon(Icons.admin_panel_settings, size: 18, color: Color(0xFFEF4444)),
+                            const SizedBox(width: 10),
+                            Text("Yönetici (Admin) Yap", style: GoogleFonts.outfit(color: Colors.white70)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // ─────────────────────────────────────────
+  // BRANCH & PROMOTION & CATEGORIES MANAGEMENT PANEL
+  // ─────────────────────────────────────────
+  Widget _buildManagementTab(ThemeData theme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Custom neon sliding segmented subtabs
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
+          child: Container(
+            decoration: BoxDecoration(
+              color: theme.cardColor,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+            ),
+            padding: const EdgeInsets.all(4),
+            child: Row(
+              children: [
+                _buildSubTabButton("Şubeler", 0),
+                _buildSubTabButton("Kuponlar", 1),
+                _buildSubTabButton("Kategoriler", 2),
+              ],
+            ),
+          ),
+        ),
+        Expanded(
+          child: IndexedStack(
+            index: _managementSubTab,
+            children: [
+              _buildBranchesSubTab(theme),
+              _buildDiscountsSubTab(theme),
+              _buildCategoriesSubTab(theme),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSubTabButton(String title, int index) {
+    final theme = Theme.of(context);
+    final isSelected = _managementSubTab == index;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _managementSubTab = index),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          decoration: BoxDecoration(
+            color: isSelected ? theme.primaryColor : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: isSelected
+                ? [
+                    BoxShadow(
+                      color: theme.primaryColor.withValues(alpha: 0.3),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    )
+                  ]
+                : [],
+          ),
+          child: Text(
+            title,
+            textAlign: TextAlign.center,
+            style: GoogleFonts.outfit(
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+              color: isSelected ? Colors.black : Colors.white60,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // SubTab 0: Branches Management
+  Widget _buildBranchesSubTab(ThemeData theme) {
+    final user = FirebaseService.currentUser;
+    if (user == null) return const SizedBox();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                "Şubelerimiz",
+                style: GoogleFonts.outfit(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+              ),
+              ElevatedButton.icon(
+                onPressed: _showAddBranchSheet,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: theme.primaryColor.withValues(alpha: 0.15),
+                  foregroundColor: theme.primaryColor,
+                  side: BorderSide(color: theme.primaryColor.withValues(alpha: 0.3)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                ),
+                icon: const Icon(Icons.add_location_alt_rounded, size: 16),
+                label: Text("Şube Ekle", style: GoogleFonts.outfit(fontSize: 11, fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
+        ),
+
+        Expanded(
+          child: StreamBuilder<List<RestaurantBranch>>(
+            stream: FirebaseService.streamBranches(user.uid),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CupertinoActivityIndicator(color: Colors.white));
+              }
+              final branches = snapshot.data ?? [];
+              if (branches.isEmpty) {
+                return Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.storefront_outlined, size: 48, color: Colors.white24),
+                      const SizedBox(height: 12),
+                      Text(
+                        "Henüz eklenmiş bir şube bulunmuyor.",
+                        style: GoogleFonts.outfit(color: Colors.white38, fontSize: 13),
+                      ),
+                    ],
+                  ),
+                );
+              }
+
+              return ListView.builder(
+                physics: const BouncingScrollPhysics(),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                itemCount: branches.length,
+                itemBuilder: (context, idx) {
+                  final b = branches[idx];
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: theme.cardColor,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: theme.primaryColor.withValues(alpha: 0.1),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(Icons.location_on_rounded, color: theme.primaryColor, size: 20),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                b.name,
+                                style: GoogleFonts.outfit(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                b.address,
+                                style: GoogleFonts.outfit(fontSize: 11, color: Colors.white60),
+                              ),
+                              if (b.phone.isNotEmpty) ...[
+                                const SizedBox(height: 4),
+                                Row(
+                                  children: [
+                                    const Icon(Icons.phone, size: 10, color: Colors.white38),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      b.phone,
+                                      style: GoogleFonts.outfit(fontSize: 10, color: Colors.white38),
+                                    ),
+                                  ],
+                                )
+                              ]
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent, size: 20),
+                          onPressed: () => _handleDeleteBranch(b),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _showAddBranchSheet() {
+    final theme = Theme.of(context);
+    final formKey = GlobalKey<FormState>();
+    final nameCtrl = TextEditingController();
+    final addrCtrl = TextEditingController();
+    final phoneCtrl = TextEditingController();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return AnimatedPadding(
+              padding: MediaQuery.of(context).viewInsets,
+              duration: const Duration(milliseconds: 100),
+              child: Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: theme.cardColor,
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+                ),
+                child: Form(
+                  key: formKey,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.add_location_alt_rounded, color: theme.primaryColor, size: 24),
+                            const SizedBox(width: 8),
+                            Text(
+                              "Yeni Şube Ekle",
+                              style: GoogleFonts.outfit(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                            ),
+                          ],
+                        ),
+                        const Divider(color: Colors.white12, height: 24),
+                        TextFormField(
+                          controller: nameCtrl,
+                          style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
+                          decoration: const InputDecoration(
+                            labelText: "Şube Adı",
+                            prefixIcon: Icon(Icons.storefront, size: 18, color: Colors.white54),
+                            hintText: "Örn: Kadıköy Şubesi",
+                          ),
+                          validator: (v) => v == null || v.trim().isEmpty ? "Şube adı boş olamaz" : null,
+                        ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: addrCtrl,
+                          style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
+                          maxLines: 2,
+                          decoration: const InputDecoration(
+                            labelText: "Şube Adresi",
+                            prefixIcon: Icon(Icons.map_outlined, size: 18, color: Colors.white54),
+                            hintText: "Örn: Caferağa Mah. Moda Cad. No:12",
+                          ),
+                          validator: (v) => v == null || v.trim().isEmpty ? "Şube adresi boş olamaz" : null,
+                        ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: phoneCtrl,
+                          keyboardType: TextInputType.phone,
+                          style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
+                          decoration: const InputDecoration(
+                            labelText: "İrtibat Telefonu",
+                            prefixIcon: Icon(Icons.phone_outlined, size: 18, color: Colors.white54),
+                            hintText: "Örn: 02163456789",
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+                        ElevatedButton(
+                          onPressed: () async {
+                            if (!formKey.currentState!.validate()) return;
+                            final user = FirebaseService.currentUser;
+                            if (user == null) return;
+
+                            final newBranch = RestaurantBranch(
+                              id: '',
+                              name: nameCtrl.text.trim(),
+                              address: addrCtrl.text.trim(),
+                              phone: phoneCtrl.text.trim(),
+                              isActive: true,
+                            );
+
+                            final err = await FirebaseService.saveBranch(user.uid, newBranch);
+                            if (context.mounted) {
+                              Navigator.of(context).pop();
+                              if (err != null) {
+                                _showFeedbackDialog("Hata", "Şube eklenemedi: $err", isError: true);
+                              } else {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text("Şube başarıyla eklendi!", style: GoogleFonts.outfit(color: Colors.black, fontWeight: FontWeight.bold)),
+                                    backgroundColor: theme.primaryColor,
+                                  ),
+                                );
+                              }
+                            }
+                          },
+                          child: const Text("Şubeyi Kaydet"),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _handleDeleteBranch(RestaurantBranch b) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Theme.of(context).cardColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text("Şubeyi Sil", style: GoogleFonts.outfit(fontWeight: FontWeight.bold, color: Colors.white)),
+        content: Text("${b.name} şubesini silmek istediğinize emin misiniz?", style: GoogleFonts.outfit(color: Colors.white70)),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text("Vazgeç")),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            child: const Text("Sil"),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      final user = FirebaseService.currentUser;
+      if (user != null) {
+        final err = await FirebaseService.deleteBranch(user.uid, b.id);
+        if (err != null && mounted) {
+          _showFeedbackDialog("Hata", "Şube silinemedi: $err", isError: true);
+        }
+      }
+    }
+  }
+
+  // SubTab 1: Coupons Management
+  Widget _buildDiscountsSubTab(ThemeData theme) {
+    final user = FirebaseService.currentUser;
+    if (user == null) return const SizedBox();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                "İndirim Kuponları",
+                style: GoogleFonts.outfit(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+              ),
+              ElevatedButton.icon(
+                onPressed: _showAddDiscountSheet,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: theme.primaryColor.withValues(alpha: 0.15),
+                  foregroundColor: theme.primaryColor,
+                  side: BorderSide(color: theme.primaryColor.withValues(alpha: 0.3)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                ),
+                icon: const Icon(Icons.qr_code_rounded, size: 16),
+                label: Text("Kupon Oluştur", style: GoogleFonts.outfit(fontSize: 11, fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
+        ),
+
+        Expanded(
+          child: StreamBuilder<List<DiscountCode>>(
+            stream: FirebaseService.streamDiscountCodes(user.uid),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CupertinoActivityIndicator(color: Colors.white));
+              }
+              final codes = snapshot.data ?? [];
+              if (codes.isEmpty) {
+                return Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.confirmation_number_outlined, size: 48, color: Colors.white24),
+                      const SizedBox(height: 12),
+                      Text(
+                        "Henüz eklenmiş indirim kuponu bulunmuyor.",
+                        style: GoogleFonts.outfit(color: Colors.white38, fontSize: 13),
+                      ),
+                    ],
+                  ),
+                );
+              }
+
+              return ListView.builder(
+                physics: const BouncingScrollPhysics(),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                itemCount: codes.length,
+                itemBuilder: (context, idx) {
+                  final c = codes[idx];
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: theme.cardColor,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: theme.primaryColor.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            c.typeLabel,
+                            style: GoogleFonts.outfit(color: theme.primaryColor, fontWeight: FontWeight.bold, fontSize: 13),
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Text(
+                                    c.code,
+                                    style: GoogleFonts.outfit(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white, letterSpacing: 1),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  if (c.stackable)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: Colors.greenAccent.withValues(alpha: 0.15),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        "Birleşebilir",
+                                        style: GoogleFonts.outfit(fontSize: 8, color: Colors.greenAccent, fontWeight: FontWeight.bold),
+                                      ),
+                                    )
+                                  else
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: Colors.orangeAccent.withValues(alpha: 0.15),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        "Tekil",
+                                        style: GoogleFonts.outfit(fontSize: 8, color: Colors.orangeAccent, fontWeight: FontWeight.bold),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                c.minimumOrderAmount > 0
+                                    ? "Alt Sınır: ${c.minimumOrderAmount.toStringAsFixed(0)} TL • Şube: ${c.branchName}"
+                                    : "Alt Sınır Yok • Şube: ${c.branchName}",
+                                style: GoogleFonts.outfit(fontSize: 11, color: Colors.white60),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent, size: 20),
+                          onPressed: () => _handleDeleteDiscount(c),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _showAddDiscountSheet() {
+    final theme = Theme.of(context);
+    final formKey = GlobalKey<FormState>();
+    final codeCtrl = TextEditingController();
+    final valueCtrl = TextEditingController();
+    final minAmountCtrl = TextEditingController(text: '0');
+    
+    DiscountType selectedType = DiscountType.percentage;
+    bool isStackable = false;
+    RestaurantBranch? selectedBranch;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return AnimatedPadding(
+              padding: MediaQuery.of(context).viewInsets,
+              duration: const Duration(milliseconds: 100),
+              child: Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: theme.cardColor,
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+                ),
+                child: Form(
+                  key: formKey,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.add_card_rounded, color: theme.primaryColor, size: 24),
+                            const SizedBox(width: 8),
+                            Text(
+                              "Yeni İndirim Kodu Oluştur",
+                              style: GoogleFonts.outfit(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                            ),
+                          ],
+                        ),
+                        const Divider(color: Colors.white12, height: 24),
+                        
+                        TextFormField(
+                          controller: codeCtrl,
+                          style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
+                          textCapitalization: TextCapitalization.characters,
+                          decoration: const InputDecoration(
+                            labelText: "Kupon Kodu",
+                            prefixIcon: Icon(Icons.qr_code, size: 18, color: Colors.white54),
+                            hintText: "Örn: KEBAP20",
+                          ),
+                          validator: (v) => v == null || v.trim().isEmpty ? "Kupon kodu boş olamaz" : null,
+                        ),
+                        const SizedBox(height: 12),
+
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ChoiceChip(
+                                label: Text("Yüzdelik (%)", style: GoogleFonts.outfit(fontSize: 12, fontWeight: FontWeight.bold, color: selectedType == DiscountType.percentage ? Colors.black : Colors.white70)),
+                                selected: selectedType == DiscountType.percentage,
+                                selectedColor: theme.primaryColor,
+                                onSelected: (val) {
+                                  if (val) setModalState(() => selectedType = DiscountType.percentage);
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: ChoiceChip(
+                                label: Text("Sabit (TL)", style: GoogleFonts.outfit(fontSize: 12, fontWeight: FontWeight.bold, color: selectedType == DiscountType.flatAmount ? Colors.black : Colors.white70)),
+                                selected: selectedType == DiscountType.flatAmount,
+                                selectedColor: theme.primaryColor,
+                                onSelected: (val) {
+                                  if (val) setModalState(() => selectedType = DiscountType.flatAmount);
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+
+                        TextFormField(
+                          controller: valueCtrl,
+                          keyboardType: TextInputType.number,
+                          style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
+                          decoration: InputDecoration(
+                            labelText: selectedType == DiscountType.percentage ? "İndirim Yüzdesi (%)" : "İndirim Tutarı (TL)",
+                            prefixIcon: const Icon(Icons.percent_rounded, size: 18, color: Colors.white54),
+                            hintText: selectedType == DiscountType.percentage ? "Örn: 15" : "Örn: 50",
+                          ),
+                          validator: (v) {
+                            if (v == null || v.trim().isEmpty) return "Tutar/Yüzde boş olamaz";
+                            final numVal = double.tryParse(v);
+                            if (numVal == null || numVal <= 0) return "Geçerli bir değer girin";
+                            if (selectedType == DiscountType.percentage && numVal > 100) return "Yüzde 100'den büyük olamaz";
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 12),
+
+                        TextFormField(
+                          controller: minAmountCtrl,
+                          keyboardType: TextInputType.number,
+                          style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
+                          decoration: const InputDecoration(
+                            labelText: "Minimum Sipariş Tutarı (Alt Sınır - TL)",
+                            prefixIcon: Icon(Icons.shopping_bag_outlined, size: 18, color: Colors.white54),
+                            hintText: "Örn: 100 (Bu tutarın altındaki sepetlere uygulanmaz)",
+                          ),
+                          validator: (v) {
+                            if (v != null && v.isNotEmpty && double.tryParse(v) == null) {
+                              return "Lütfen geçerli bir tutar girin";
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 12),
+
+                        StreamBuilder<List<RestaurantBranch>>(
+                          stream: FirebaseService.streamBranches(FirebaseService.currentUser?.uid ?? ''),
+                          builder: (context, branchSnap) {
+                            final branches = branchSnap.data ?? [];
+                            return Theme(
+                              data: theme.copyWith(canvasColor: theme.cardColor),
+                              child: DropdownButtonFormField<RestaurantBranch?>(
+                                value: selectedBranch,
+                                style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
+                                decoration: const InputDecoration(
+                                  labelText: "Geçerli Olacağı Şube",
+                                  prefixIcon: Icon(Icons.location_city_rounded, size: 18, color: Colors.white54),
+                                ),
+                                items: [
+                                  DropdownMenuItem<RestaurantBranch?>(
+                                    value: null,
+                                    child: Text("Tüm Şubeler", style: GoogleFonts.outfit(color: Colors.white)),
+                                  ),
+                                  ...branches.map((b) => DropdownMenuItem<RestaurantBranch?>(
+                                        value: b,
+                                        child: Text(b.name, style: GoogleFonts.outfit(color: Colors.white)),
+                                      )),
+                                ],
+                                onChanged: (val) {
+                                  setModalState(() => selectedBranch = val);
+                                },
+                              ),
+                            );
+                          },
+                        ),
+                        const SizedBox(height: 12),
+
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text("Diğer Kuponlarla Birleşsin", style: GoogleFonts.outfit(fontSize: 13, color: Colors.white, fontWeight: FontWeight.bold)),
+                          subtitle: Text("Bu kupon başka kuponlarla aynı siparişte kullanılabilir mi?", style: GoogleFonts.outfit(fontSize: 11, color: Colors.white38)),
+                          value: isStackable,
+                          activeColor: theme.primaryColor,
+                          onChanged: (val) => setModalState(() => isStackable = val),
+                        ),
+
+                        const SizedBox(height: 24),
+                        ElevatedButton(
+                          onPressed: () async {
+                            if (!formKey.currentState!.validate()) return;
+                            final user = FirebaseService.currentUser;
+                            if (user == null) return;
+
+                            final newCode = DiscountCode(
+                              id: '',
+                              code: codeCtrl.text.trim().toUpperCase(),
+                              type: selectedType,
+                              value: double.parse(valueCtrl.text.trim()),
+                              restaurantOwnerId: user.uid,
+                              branchId: selectedBranch?.id,
+                              branchName: selectedBranch?.name ?? 'Tüm Şubeler',
+                              minimumOrderAmount: double.parse(minAmountCtrl.text.trim()),
+                              stackable: isStackable,
+                              isActive: true,
+                            );
+
+                            final err = await FirebaseService.saveDiscountCode(newCode);
+                            if (context.mounted) {
+                              Navigator.of(context).pop();
+                              if (err != null) {
+                                _showFeedbackDialog("Hata", "Kupon oluşturulamadı: $err", isError: true);
+                              } else {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text("Kupon başarıyla oluşturuldu!", style: GoogleFonts.outfit(color: Colors.black, fontWeight: FontWeight.bold)),
+                                    backgroundColor: theme.primaryColor,
+                                  ),
+                                );
+                              }
+                            }
+                          },
+                          child: const Text("Kuponu Yayınla"),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _handleDeleteDiscount(DiscountCode c) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Theme.of(context).cardColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text("Kuponu Sil", style: GoogleFonts.outfit(fontWeight: FontWeight.bold, color: Colors.white)),
+        content: Text("${c.code} kodlu kuponu silmek istediğinize emin misiniz?", style: GoogleFonts.outfit(color: Colors.white70)),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text("Vazgeç")),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            child: const Text("Sil"),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      final err = await FirebaseService.deleteDiscountCode(c.id);
+      if (err != null && mounted) {
+        _showFeedbackDialog("Hata", "Kupon silinemedi: $err", isError: true);
+      }
+    }
+  }
+
+  // SubTab 2: Categories Management
+  Widget _buildCategoriesSubTab(ThemeData theme) {
+    final categoryCtrl = TextEditingController();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                "Yemek Kategorileri",
+                style: GoogleFonts.outfit(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: categoryCtrl,
+                      style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
+                      decoration: const InputDecoration(
+                        labelText: "Yeni Kategori Adı",
+                        prefixIcon: Icon(Icons.category, size: 18, color: Colors.white54),
+                        hintText: "Örn: Dönerler",
+                        contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  ElevatedButton(
+                    onPressed: () async {
+                      final name = categoryCtrl.text.trim();
+                      if (name.isEmpty) return;
+                      final err = await FirebaseService.addCategory(name);
+                      if (err != null) {
+                        _showFeedbackDialog("Hata", "Kategori eklenemedi: $err", isError: true);
+                      } else {
+                        categoryCtrl.clear();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text("Kategori başarıyla eklendi!", style: GoogleFonts.outfit(color: Colors.black, fontWeight: FontWeight.bold)),
+                            backgroundColor: theme.primaryColor,
+                          ),
+                        );
+                      }
+                    },
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: const Size(100, 48),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: Text("Ekle", style: GoogleFonts.outfit(fontWeight: FontWeight.bold)),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+
+        Expanded(
+          child: StreamBuilder<List<String>>(
+            stream: FirebaseService.streamCategories(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CupertinoActivityIndicator(color: Colors.white));
+              }
+              final cats = snapshot.data ?? ["Çorba", "Ana Yemek", "Tatlı", "İçecek"];
+              if (cats.isEmpty) {
+                return Center(
+                  child: Text(
+                    "Henüz eklenmiş bir kategori bulunmuyor.",
+                    style: GoogleFonts.outfit(color: Colors.white38, fontSize: 13),
+                  ),
+                );
+              }
+
+              return ListView.builder(
+                physics: const BouncingScrollPhysics(),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                itemCount: cats.length,
+                itemBuilder: (context, idx) {
+                  final cat = cats[idx];
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: theme.cardColor,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.label_important_outline_rounded, color: theme.primaryColor, size: 18),
+                            const SizedBox(width: 12),
+                            Text(
+                              cat,
+                              style: GoogleFonts.outfit(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white),
+                            ),
+                          ],
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent, size: 18),
+                          onPressed: () async {
+                            final confirm = await showDialog<bool>(
+                              context: context,
+                              builder: (context) => AlertDialog(
+                                backgroundColor: theme.cardColor,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                                title: Text("Kategoriyi Sil", style: GoogleFonts.outfit(fontWeight: FontWeight.bold, color: Colors.white)),
+                                content: Text("$cat kategorisini silmek istediğinize emin misiniz?", style: GoogleFonts.outfit(color: Colors.white70)),
+                                actions: [
+                                  TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text("Vazgeç")),
+                                  ElevatedButton(
+                                    onPressed: () => Navigator.of(context).pop(true),
+                                    style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                                    child: const Text("Sil"),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (confirm == true) {
+                              final err = await FirebaseService.deleteCategory(cat);
+                              if (err != null && mounted) {
+                                _showFeedbackDialog("Hata", "Kategori silinemedi: $err", isError: true);
+                              }
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ─────────────────────────────────────────
+  // LIVE CHAT SUPPORT QUEUE TICKET DESK
+  // ─────────────────────────────────────────
+  Widget _buildSupportQueueTab(ThemeData theme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
+          child: Container(
+            decoration: BoxDecoration(
+              color: theme.cardColor,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+            ),
+            padding: const EdgeInsets.all(4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => setState(() => _supportQueueSubTab = 0),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      decoration: BoxDecoration(
+                        color: _supportQueueSubTab == 0 ? theme.primaryColor : Colors.transparent,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        "Bekleyen Destekler",
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.outfit(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                          color: _supportQueueSubTab == 0 ? Colors.black : Colors.white60,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => setState(() => _supportQueueSubTab = 1),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      decoration: BoxDecoration(
+                        color: _supportQueueSubTab == 1 ? theme.primaryColor : Colors.transparent,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        "Geçmiş Görüşmeler",
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.outfit(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                          color: _supportQueueSubTab == 1 ? Colors.black : Colors.white60,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        Expanded(
+          child: StreamBuilder<List<ChatSession>>(
+            stream: FirebaseService.streamChatSessions(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CupertinoActivityIndicator(color: Colors.white));
+              }
+              final allSessions = snapshot.data ?? [];
+              final filtered = allSessions.where((s) {
+                if (_supportQueueSubTab == 0) {
+                  return s.status == 'waiting' || s.status == 'active';
+                } else {
+                  return s.status == 'closed';
+                }
+              }).toList();
+
+              if (filtered.isEmpty) {
+                return Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.support_agent_rounded, size: 48, color: Colors.white24),
+                      const SizedBox(height: 12),
+                      Text(
+                        _supportQueueSubTab == 0
+                            ? "Bekleyen destek çağrısı bulunmuyor."
+                            : "Geçmiş herhangi bir görüşme bulunmuyor.",
+                        style: GoogleFonts.outfit(color: Colors.white38, fontSize: 13),
+                      ),
+                    ],
+                  ),
+                );
+              }
+
+              return ListView.builder(
+                physics: const BouncingScrollPhysics(),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                itemCount: filtered.length,
+                itemBuilder: (context, idx) {
+                  final s = filtered[idx];
+                  final isCurrentAgentClaimant = s.assignedAgentId == FirebaseService.currentUser?.uid;
+                  
+                  Color glowColor = Colors.orangeAccent;
+                  String statusText = "Müşteri Bekliyor...";
+                  if (s.status == 'active') {
+                    glowColor = Colors.greenAccent;
+                    statusText = "Destek Sürüyor • Yetkili: ${s.assignedAgentName}";
+                  } else if (s.status == 'closed') {
+                    glowColor = Colors.grey;
+                    statusText = "Görüşme Tamamlandı";
+                  }
+
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 14),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: theme.cardColor,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 8,
+                              height: 8,
+                              decoration: BoxDecoration(
+                                color: glowColor,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              statusText,
+                              style: GoogleFonts.outfit(color: glowColor, fontWeight: FontWeight.bold, fontSize: 11),
+                            ),
+                            const Spacer(),
+                            Text(
+                              "${s.createdAt.hour.toString().padLeft(2, '0')}:${s.createdAt.minute.toString().padLeft(2, '0')}",
+                              style: GoogleFonts.outfit(fontSize: 10, color: Colors.white38),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          s.customerName,
+                          style: GoogleFonts.outfit(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
+                        ),
+                        if (s.lastMessage.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            s.lastMessage,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.outfit(fontSize: 12, color: Colors.white60),
+                          ),
+                        ],
+                        if (s.status != 'closed') ...[
+                          const SizedBox(height: 16),
+                          ElevatedButton(
+                            onPressed: () async {
+                              if (s.status == 'waiting') {
+                                final err = await FirebaseService.claimChatSession(s.id);
+                                if (err != null) {
+                                  _showFeedbackDialog("Bağlantı Hatası", "Görüşme başka yetkili tarafından alındı.", isError: true);
+                                } else {
+                                  if (context.mounted) {
+                                    Navigator.of(context).push(
+                                      MaterialPageRoute(builder: (_) => LiveSupportScreen(session: s)),
+                                    );
+                                  }
+                                }
+                              } else if (s.status == 'active') {
+                                if (isCurrentAgentClaimant) {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(builder: (_) => LiveSupportScreen(session: s)),
+                                  );
+                                } else {
+                                  _showFeedbackDialog("Erişim Reddedildi", "Bu destek görüşmesini başka bir yetkili devraldı.", isError: true);
+                                }
+                              }
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: s.status == 'waiting'
+                                  ? theme.primaryColor
+                                  : (isCurrentAgentClaimant ? Colors.greenAccent : Colors.grey.withValues(alpha: 0.2)),
+                              foregroundColor: s.status == 'waiting' ? Colors.black : Colors.white,
+                              minimumSize: const Size(double.infinity, 42),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            ),
+                            child: Text(
+                              s.status == 'waiting'
+                                  ? "Görüşmeyi Başlat"
+                                  : (isCurrentAgentClaimant ? "Görüşmeye Geri Dön" : "Başka Yetkili İlgileniyor"),
+                              style: GoogleFonts.outfit(fontWeight: FontWeight.bold, fontSize: 12, color: s.status == 'waiting' ? Colors.black : Colors.white),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ─────────────────────────────────────────
+  // ADMIN CONSOLE SUITE FOR POWER USERS
+  // ─────────────────────────────────────────
+  Widget _buildAdminSuiteTab(ThemeData theme, double totalRevenue, int activeOrders, int mealsCount) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
+          child: Container(
+            decoration: BoxDecoration(
+              color: theme.cardColor,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+            ),
+            padding: const EdgeInsets.all(4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => setState(() => _adminSuiteSubTab = 0),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      decoration: BoxDecoration(
+                        color: _adminSuiteSubTab == 0 ? theme.primaryColor : Colors.transparent,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        "Mali Rapor & Analiz",
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.outfit(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                          color: _adminSuiteSubTab == 0 ? Colors.black : Colors.white60,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => setState(() => _adminSuiteSubTab = 1),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      decoration: BoxDecoration(
+                        color: _adminSuiteSubTab == 1 ? theme.primaryColor : Colors.transparent,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        "Kullanıcı Yetkileri",
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.outfit(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                          color: _adminSuiteSubTab == 1 ? Colors.black : Colors.white60,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        Expanded(
+          child: IndexedStack(
+            index: _adminSuiteSubTab,
+            children: [
+              _buildAnalyticsTab(theme, totalRevenue, activeOrders, mealsCount),
+              _buildUsersTab(theme),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 // Canvas Painter drawing a gorgeous, cubic-spline analytics chart with neon drop shadow
@@ -900,7 +2325,7 @@ class RevenueLinePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final gridPaint = Paint()
-      ..color = Colors.white.withOpacity(0.03)
+      ..color = Colors.white.withValues(alpha: 0.03)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1;
 
@@ -942,7 +2367,7 @@ class RevenueLinePainter extends CustomPainter {
       ..shader = LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
-        colors: [glowColor.withOpacity(0.4), glowColor.withOpacity(0.01)],
+        colors: [glowColor.withValues(alpha: 0.4), glowColor.withValues(alpha: 0.01)],
       ).createShader(Rect.fromLTWH(0, 0, size.width, size.height));
     canvas.drawPath(shadowPath, fillPaint);
 

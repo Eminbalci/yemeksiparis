@@ -143,7 +143,7 @@ class _RegisterScreenState extends State<RegisterScreen> with SingleTickerProvid
               height: 250,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: theme.primaryColor.withOpacity(0.08),
+                color: theme.primaryColor.withValues(alpha: 0.08),
               ),
             ),
           ),
@@ -155,7 +155,7 @@ class _RegisterScreenState extends State<RegisterScreen> with SingleTickerProvid
               height: 200,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: theme.colorScheme.secondary.withOpacity(0.06),
+                color: theme.colorScheme.secondary.withValues(alpha: 0.06),
               ),
             ),
           ),
@@ -179,9 +179,9 @@ class _RegisterScreenState extends State<RegisterScreen> with SingleTickerProvid
                             padding: const EdgeInsets.all(18),
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: theme.colorScheme.secondary.withOpacity(0.12),
+                              color: theme.colorScheme.secondary.withValues(alpha: 0.12),
                               border: Border.all(
-                                color: theme.colorScheme.secondary.withOpacity(0.3),
+                                color: theme.colorScheme.secondary.withValues(alpha: 0.3),
                                 width: 1.5,
                               ),
                             ),
@@ -318,7 +318,7 @@ class _RegisterScreenState extends State<RegisterScreen> with SingleTickerProvid
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: theme.colorScheme.secondary,
                                   foregroundColor: Colors.white,
-                                  shadowColor: theme.colorScheme.secondary.withOpacity(0.3),
+                                  shadowColor: theme.colorScheme.secondary.withValues(alpha: 0.3),
                                 ),
                                 child: const Row(
                                   mainAxisAlignment: MainAxisAlignment.center,

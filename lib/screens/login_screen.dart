@@ -193,7 +193,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
               height: 300,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: theme.primaryColor.withOpacity(0.12),
+                color: theme.primaryColor.withValues(alpha: 0.12),
               ),
             ),
           ),
@@ -206,7 +206,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
               height: 250,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: theme.colorScheme.secondary.withOpacity(0.08),
+                color: theme.colorScheme.secondary.withValues(alpha: 0.08),
               ),
             ),
           ),
@@ -226,7 +226,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.amber.withOpacity(0.3),
+                      color: Colors.amber.withValues(alpha: 0.3),
                       blurRadius: 8,
                       offset: const Offset(0, 2),
                     )
@@ -274,14 +274,14 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                             padding: const EdgeInsets.all(20),
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: theme.primaryColor.withOpacity(0.15),
+                              color: theme.primaryColor.withValues(alpha: 0.15),
                               border: Border.all(
-                                color: theme.primaryColor.withOpacity(0.3),
+                                color: theme.primaryColor.withValues(alpha: 0.3),
                                 width: 2,
                               ),
                               boxShadow: [
                                 BoxShadow(
-                                  color: theme.primaryColor.withOpacity(0.1),
+                                  color: theme.primaryColor.withValues(alpha: 0.1),
                                   blurRadius: 20,
                                   spreadRadius: 2,
                                 )
@@ -323,7 +323,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                             color: theme.cardColor,
                             borderRadius: BorderRadius.circular(20),
                             border: Border.all(
-                              color: Colors.white.withOpacity(0.05),
+                              color: Colors.white.withValues(alpha: 0.05),
                             ),
                           ),
                           child: Row(
@@ -344,7 +344,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                                       boxShadow: isSelected 
                                           ? [
                                               BoxShadow(
-                                                color: theme.primaryColor.withOpacity(0.3),
+                                                color: theme.primaryColor.withValues(alpha: 0.3),
                                                 blurRadius: 8,
                                                 offset: const Offset(0, 2),
                                               )
