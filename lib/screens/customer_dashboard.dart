@@ -636,10 +636,10 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                     else
                       // Delivery Address Selection Section inside Cart
                       StreamBuilder<List<DeliveryAddress>>(
-                        stream: FirebaseService.streamAddresses(user!.uid),
+                        stream: FirebaseService.streamAddresses(user?.uid ?? ''),
                         builder: (context, addrSnapshot) {
                           final addresses = addrSnapshot.data ?? [];
-                          final hasSelected = user.address.isNotEmpty;
+                          final hasSelected = user?.address.isNotEmpty == true;
                           
                           return Container(
                             padding: const EdgeInsets.all(12),
@@ -679,7 +679,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                                         padding: EdgeInsets.zero,
                                         constraints: const BoxConstraints(),
                                         onSelected: (addr) async {
-                                          await FirebaseService.selectAddress(user.uid, addr.id, addr.fullAddress, addr.phone);
+                                          if (user != null) await FirebaseService.selectAddress(user.uid, addr.id, addr.fullAddress, addr.phone);
                                           setModalState(() {});
                                           setState(() {});
                                         },
@@ -719,7 +719,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                                 const SizedBox(height: 6),
                                 Text(
                                   hasSelected 
-                                      ? user.address 
+                                      ? (user?.address ?? '') 
                                       : "Lütfen sipariş için bir teslimat adresi belirleyin.",
                                   style: GoogleFonts.outfit(
                                     fontSize: 11, 
@@ -1181,7 +1181,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                   Expanded(
                     child: Text(
                       user?.address.isNotEmpty == true 
-                          ? "Teslimat: ${user!.address}" 
+                          ? "Teslimat: ${user?.address ?? ''}" 
                           : "Lütfen bir teslimat adresi seçin (Tıklayın)",
                       style: GoogleFonts.outfit(
                         fontSize: 11, 
@@ -1274,7 +1274,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                           const Icon(Icons.delivery_dining, size: 12, color: Color(0xFF10B981)),
                           const SizedBox(width: 4),
                           Text(
-                            "Yakın konumda",
+                            FirebaseService.calculateDistanceString(user.address, r.restaurantAddress),
                             style: GoogleFonts.outfit(fontSize: 9, color: const Color(0xFF10B981), fontWeight: FontWeight.w600),
                           ),
                         ],
@@ -2147,6 +2147,146 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // Branch Invitation Notifications
+          StreamBuilder<List<BranchInvitation>>(
+            stream: FirebaseService.streamBranchInvitations(),
+            builder: (context, snapshot) {
+              final invites = snapshot.data ?? [];
+              if (invites.isEmpty) return const SizedBox();
+
+              return Column(
+                children: invites.map((invite) {
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 16),
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          const Color(0xFF1E3A8A).withValues(alpha: 0.8),
+                          const Color(0xFF3B82F6).withValues(alpha: 0.3),
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(color: const Color(0xFF3B82F6).withValues(alpha: 0.3), width: 1.5),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF3B82F6).withValues(alpha: 0.2),
+                          blurRadius: 16,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF3B82F6).withValues(alpha: 0.2),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(Icons.business_rounded, color: Color(0xFF60A5FA), size: 22),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    "Şube Yetkilisi Daveti!",
+                                    style: GoogleFonts.outfit(
+                                      color: const Color(0xFF93C5FD),
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    invite.restaurantName,
+                                    style: GoogleFonts.outfit(
+                                      color: Colors.white,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          "Bu restoran sizi yönetici/şube yetkilisi olarak atamak istiyor. Kabul ettiğiniz takdirde restoran yönetim paneline erişebileceksiniz.",
+                          style: GoogleFonts.outfit(color: Colors.white70, fontSize: 12, height: 1.4),
+                        ),
+                        const SizedBox(height: 16),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            TextButton(
+                              onPressed: () async {
+                                final error = await FirebaseService.respondToBranchInvitation(invite.id, false);
+                                if (context.mounted && error != null) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(content: Text(error, style: GoogleFonts.outfit())),
+                                  );
+                                }
+                              },
+                              style: TextButton.styleFrom(
+                                foregroundColor: Colors.white38,
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                              ),
+                              child: Text("Reddet", style: GoogleFonts.outfit(fontSize: 13, fontWeight: FontWeight.bold)),
+                            ),
+                            const SizedBox(width: 10),
+                            ElevatedButton(
+                              onPressed: () async {
+                                final error = await FirebaseService.respondToBranchInvitation(invite.id, true);
+                                if (context.mounted) {
+                                  if (error != null) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text(error, style: GoogleFonts.outfit())),
+                                    );
+                                  } else {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          "${invite.restaurantName} şube yetkilisi davetini kabul ettiniz!",
+                                          style: GoogleFonts.outfit(fontWeight: FontWeight.bold, color: Colors.black),
+                                        ),
+                                        backgroundColor: theme.primaryColor,
+                                        behavior: SnackBarBehavior.floating,
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                        margin: const EdgeInsets.all(16),
+                                      ),
+                                    );
+                                    // Refresh layout to update dashboards
+                                    setState(() {});
+                                  }
+                                }
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF3B82F6),
+                                foregroundColor: Colors.white,
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                              ),
+                              child: Text("Kabul Et", style: GoogleFonts.outfit(fontSize: 13, fontWeight: FontWeight.bold)),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  );
+                }).toList(),
+              );
+            },
+          ),
           // Profile Card with Glowing Avatar
           Container(
             padding: const EdgeInsets.all(20),
@@ -2732,7 +2872,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                     const Icon(Icons.dashboard_customize_rounded, color: Colors.black, size: 20),
                     const SizedBox(width: 8),
                     Text(
-                      "Yönetim Paneline Geç",
+                      user.role == 'restaurant_owner' ? "Restoran Paneline Geç" : "Yönetim Paneline Geç",
                       style: GoogleFonts.outfit(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black),
                     ),
                   ],

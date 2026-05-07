@@ -17,6 +17,7 @@ class UserModel {
   final double minOrderAmount;
   final String restaurantLogo;
   final String restaurantDescription;
+  final double maxDeliveryDistance; // in kilometers (km)
 
   UserModel({
     required this.uid,
@@ -33,6 +34,7 @@ class UserModel {
     this.minOrderAmount = 0.0,
     this.restaurantLogo = '',
     this.restaurantDescription = '',
+    this.maxDeliveryDistance = 5.0, // Default 5.0 km
   });
 
   UserModel copyWith({
@@ -46,6 +48,7 @@ class UserModel {
     double? minOrderAmount,
     String? restaurantLogo,
     String? restaurantDescription,
+    double? maxDeliveryDistance,
     String? role,
     String? status,
   }) {
@@ -64,6 +67,7 @@ class UserModel {
       minOrderAmount: minOrderAmount ?? this.minOrderAmount,
       restaurantLogo: restaurantLogo ?? this.restaurantLogo,
       restaurantDescription: restaurantDescription ?? this.restaurantDescription,
+      maxDeliveryDistance: maxDeliveryDistance ?? this.maxDeliveryDistance,
     );
   }
 
@@ -83,6 +87,7 @@ class UserModel {
       'minOrderAmount': minOrderAmount,
       'restaurantLogo': restaurantLogo,
       'restaurantDescription': restaurantDescription,
+      'maxDeliveryDistance': maxDeliveryDistance,
     };
   }
 
@@ -102,6 +107,7 @@ class UserModel {
       minOrderAmount: (map['minOrderAmount'] as num?)?.toDouble() ?? 0.0,
       restaurantLogo: map['restaurantLogo'] ?? '',
       restaurantDescription: map['restaurantDescription'] ?? '',
+      maxDeliveryDistance: (map['maxDeliveryDistance'] as num?)?.toDouble() ?? 5.0,
     );
   }
 }
@@ -333,6 +339,38 @@ class DiscountCode {
     this.isActive = true,
   });
 
+  DiscountCode copyWith({
+    String? id,
+    String? code,
+    DiscountType? type,
+    double? value,
+    String? restaurantOwnerId,
+    String? branchId,
+    String? branchName,
+    double? minimumOrderAmount,
+    bool? stackable,
+    int? maxUses,
+    int? currentUses,
+    DateTime? expiresAt,
+    bool? isActive,
+  }) {
+    return DiscountCode(
+      id: id ?? this.id,
+      code: code ?? this.code,
+      type: type ?? this.type,
+      value: value ?? this.value,
+      restaurantOwnerId: restaurantOwnerId ?? this.restaurantOwnerId,
+      branchId: branchId ?? this.branchId,
+      branchName: branchName ?? this.branchName,
+      minimumOrderAmount: minimumOrderAmount ?? this.minimumOrderAmount,
+      stackable: stackable ?? this.stackable,
+      maxUses: maxUses ?? this.maxUses,
+      currentUses: currentUses ?? this.currentUses,
+      expiresAt: expiresAt ?? this.expiresAt,
+      isActive: isActive ?? this.isActive,
+    );
+  }
+
   bool get isValid {
     if (!isActive) return false;
     if (maxUses > 0 && currentUses >= maxUses) return false;
@@ -492,6 +530,47 @@ class ChatSession {
         : [],
     orderId: map['orderId'],
     rating: map['rating'] as int?,
+  );
+}
+
+// --- Branch Invitation Model ---
+class BranchInvitation {
+  final String id;
+  final String restaurantOwnerId;
+  final String restaurantName;
+  final String inviteeEmail;
+  final String inviteeUid;
+  String status; // 'pending', 'accepted', 'declined'
+  final DateTime createdAt;
+
+  BranchInvitation({
+    required this.id,
+    required this.restaurantOwnerId,
+    required this.restaurantName,
+    required this.inviteeEmail,
+    required this.inviteeUid,
+    required this.status,
+    required this.createdAt,
+  });
+
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'restaurantOwnerId': restaurantOwnerId,
+    'restaurantName': restaurantName,
+    'inviteeEmail': inviteeEmail,
+    'inviteeUid': inviteeUid,
+    'status': status,
+    'createdAt': createdAt.toIso8601String(),
+  };
+
+  factory BranchInvitation.fromMap(Map<String, dynamic> map) => BranchInvitation(
+    id: map['id'] ?? '',
+    restaurantOwnerId: map['restaurantOwnerId'] ?? '',
+    restaurantName: map['restaurantName'] ?? '',
+    inviteeEmail: map['inviteeEmail'] ?? '',
+    inviteeUid: map['inviteeUid'] ?? '',
+    status: map['status'] ?? 'pending',
+    createdAt: DateTime.parse(map['createdAt'] ?? DateTime.now().toIso8601String()),
   );
 }
 

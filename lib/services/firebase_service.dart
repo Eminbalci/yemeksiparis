@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/models.dart';
 import '../firebase_options.dart';
+import 'mock_data.dart';
 
 class FirebaseService {
   static bool isFirebaseInitialized = false;
@@ -14,6 +15,21 @@ class FirebaseService {
   // Active Session
   static UserModel? currentUser;
   static List<UserModel> _firestoreUsers = [];
+  static StreamSubscription? _usersSubscription;
+
+  static void startUsersSynchronizer() {
+    if (useDemoMode) return;
+    _usersSubscription?.cancel();
+    _usersSubscription = FirebaseFirestore.instance.collection('users').snapshots().listen((snapshot) {
+      _firestoreUsers = snapshot.docs.map((doc) {
+        Map<String, dynamic> data = doc.data();
+        data['uid'] = doc.id;
+        return UserModel.fromMap(data);
+      }).toList();
+    }, onError: (err) {
+      debugPrint("Kullanıcı senkronizasyon hatası (Giriş yapılınca düzelecektir): $err");
+    });
+  }
 
   static Future<void> saveSession(String uid, String role) async {
     try {
@@ -39,6 +55,7 @@ class FirebaseService {
         final user = await getUserById(uid);
         if (user != null) {
           currentUser = user;
+          startUsersSynchronizer();
           return user;
         }
       }
@@ -47,165 +64,11 @@ class FirebaseService {
   }
 
   // Mock Databases (In-Memory for Demo Mode)
-  static final List<UserModel> _mockUsers = [
-    UserModel(
-      uid: 'demo_customer_1',
-      fullName: 'Muhammet Demir',
-      email: 'musteri@yemek.com',
-      role: 'customer',
-      status: 'active',
-      createdAt: DateTime.now(),
-      phone: '0532 111 22 33',
-      address: 'Kadıköy, İstanbul',
-    ),
-    UserModel(
-      uid: 'demo_restaurant_1',
-      fullName: 'Kebapçı Mahmut Usta',
-      email: 'restoran@yemek.com',
-      role: 'restaurant_owner',
-      status: 'active',
-      createdAt: DateTime.now(),
-      restaurantName: 'Mahmut Usta Kebap Evi',
-      restaurantAddress: 'Kadıköy, İstanbul',
-    ),
-    UserModel(
-      uid: 'demo_support_1',
-      fullName: 'Ahmet Destek Yetkilisi',
-      email: 'destek@yemek.com',
-      role: 'support',
-      status: 'active',
-      createdAt: DateTime.now(),
-      phone: '0533 999 88 77',
-    ),
-  ];
-
-  // Mock address and branch databases
-  static final Map<String, List<DeliveryAddress>> _mockAddresses = {
-    'demo_customer_1': [
-      DeliveryAddress(
-        id: 'addr_1',
-        title: 'Ev',
-        fullAddress: 'Moda Caddesi No:15 Daire:3, Kadıköy, İstanbul',
-        phone: '0532 111 22 33',
-      ),
-    ],
-  };
-
-  static final Map<String, List<RestaurantBranch>> _mockBranches = {
-    'demo_restaurant_1': [
-      RestaurantBranch(
-        id: 'branch_1',
-        name: 'Merkez Şube',
-        address: 'Bahariye Caddesi No:42, Kadıköy, İstanbul',
-        phone: '0216 555 44 33',
-        isActive: true,
-      ),
-    ],
-  };
-
-  static final List<FoodItem> _mockFoodItems = [
-    FoodItem(
-      id: 'food_1',
-      name: 'Özel Adana Kebabı',
-      description: 'Zırhta çekilmiş kuzu kıyması, közlenmiş biber, domates ve sumaklı soğan salatası ile.',
-      price: 240.0,
-      imageUrl: 'https://images.unsplash.com/photo-1626082927389-6cd097cdc6ec?w=500&auto=format&fit=crop&q=60&ixlib=rb-4.0.3',
-      category: 'Kebaplar',
-      rating: 4.9,
-    ),
-    FoodItem(
-      id: 'food_2',
-      name: 'Tombik Tavuk Döner',
-      description: 'Özel marinasyonlu taze tavuk göğsü, patates kızartması ve sarımsaklı mayonez sos eşliğinde.',
-      price: 130.0,
-      imageUrl: 'https://images.unsplash.com/photo-1529193591184-b1d58069ecdd?w=500&auto=format&fit=crop&q=60&ixlib=rb-4.0.3',
-      category: 'Dönerler',
-      rating: 4.6,
-    ),
-    FoodItem(
-      id: 'food_3',
-      name: 'Gurme Cheddar Burger',
-      description: '150g katkısız dana köftesi, karamelize soğan, çift cheddar peyniri ve özel burger sos.',
-      price: 185.0,
-      imageUrl: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=500&auto=format&fit=crop&q=60&ixlib=rb-4.0.3',
-      category: 'Burgerler',
-      rating: 4.8,
-    ),
-    FoodItem(
-      id: 'food_4',
-      name: 'Margarita Pizza',
-      description: 'Taş fırında taze mozzarella, ev yapımı İtalyan domates sosu ve taze fesleğen yaprakları.',
-      price: 175.0,
-      imageUrl: 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=500&auto=format&fit=crop&q=60&ixlib=rb-4.0.3',
-      category: 'Pizzalar',
-      rating: 4.5,
-    ),
-    FoodItem(
-      id: 'food_5',
-      name: 'Cevizli Ev Baklavası',
-      description: '40 kat incecik açılmış hamur, bol Giresun cevizi ve özel kıvamlı şerbeti ile enfes lezzet.',
-      price: 110.0,
-      imageUrl: 'https://images.unsplash.com/photo-1519676867240-f03562e64548?w=500&auto=format&fit=crop&q=60&ixlib=rb-4.0.3',
-      category: 'Tatlılar',
-      rating: 4.7,
-    ),
-    FoodItem(
-      id: 'food_6',
-      name: 'Hatay Usulü Künefe',
-      description: 'Tuzsuz Hatay peyniri, çıtır kadayıf, tereyağı ve fıstık tozu ile sıcak servis edilir.',
-      price: 125.0,
-      imageUrl: 'https://images.unsplash.com/photo-1519676867240-f03562e64548?w=500&auto=format&fit=crop&q=60&ixlib=rb-4.0.3',
-      category: 'Tatlılar',
-      rating: 4.9,
-    ),
-    FoodItem(
-      id: 'food_7',
-      name: 'Yayık Ayranı',
-      description: 'Doğal yoğurttan bol köpüklü, taze nane yaprağı ile serinletici lezzet.',
-      price: 35.0,
-      imageUrl: 'https://images.unsplash.com/photo-1541658016709-82535e94bc69?w=500&auto=format&fit=crop&q=60&ixlib=rb-4.0.3',
-      category: 'İçecekler',
-      rating: 4.8,
-    ),
-  ];
-
-  static final List<OrderModel> _mockOrders = [
-    OrderModel(
-      id: 'ord_101',
-      customerId: 'demo_customer_1',
-      customerName: 'Muhammet Demir',
-      items: [
-        OrderItem(
-          foodItem: FoodItem(
-            id: 'food_1',
-            name: 'Özel Adana Kebabı',
-            description: '',
-            price: 240.0,
-            imageUrl: '',
-            category: 'Kebaplar',
-            rating: 4.9,
-          ),
-          quantity: 2,
-        ),
-        OrderItem(
-          foodItem: FoodItem(
-            id: 'food_7',
-            name: 'Yayık Ayranı',
-            description: '',
-            price: 35.0,
-            imageUrl: '',
-            category: 'İçecekler',
-            rating: 4.8,
-          ),
-          quantity: 2,
-        ),
-      ],
-      totalAmount: 550.0,
-      status: 'pending',
-      createdAt: DateTime.now().subtract(const Duration(minutes: 12)),
-      note: 'Lütfen kebapların sosu bol olsun, ayranlar soğuk gelsin.',
-    ),
-  ];
+  static final List<UserModel> _mockUsers = MockData.getInitialUsers();
+  static final Map<String, List<DeliveryAddress>> _mockAddresses = MockData.getInitialAddresses();
+  static final Map<String, List<RestaurantBranch>> _mockBranches = MockData.getInitialBranches();
+  static final List<FoodItem> _mockFoodItems = MockData.getInitialFoodItems();
+  static final List<OrderModel> _mockOrders = MockData.getInitialOrders();
 
   // Stream Controllers for Mock Real-Time Updates
   static final StreamController<List<FoodItem>> _foodStreamController = StreamController<List<FoodItem>>.broadcast();
@@ -213,6 +76,8 @@ class FirebaseService {
   static final StreamController<List<UserModel>> _usersStreamController = StreamController<List<UserModel>>.broadcast();
   static final StreamController<List<DeliveryAddress>> _addressStreamController = StreamController<List<DeliveryAddress>>.broadcast();
   static final StreamController<List<RestaurantBranch>> _branchStreamController = StreamController<List<RestaurantBranch>>.broadcast();
+  static final List<BranchInvitation> _mockBranchInvitations = [];
+  static final StreamController<List<BranchInvitation>> _invitationsStreamController = StreamController<List<BranchInvitation>>.broadcast();
 
   // Initialization
   static Future<void> initialize() async {
@@ -226,14 +91,7 @@ class FirebaseService {
       useDemoMode = false;
       debugPrint("Firebase successfully initialized! App will run on Cloud Firestore.");
       
-      // Real-time Firestore users collection synchronizer
-      FirebaseFirestore.instance.collection('users').snapshots().listen((snapshot) {
-        _firestoreUsers = snapshot.docs.map((doc) {
-          Map<String, dynamic> data = doc.data();
-          data['uid'] = doc.id;
-          return UserModel.fromMap(data);
-        }).toList();
-      });
+      // Real-time Firestore users collection synchronizer will start only after auth to avoid PERMISSION_DENIED.
     } catch (e) {
       isFirebaseInitialized = false;
       useDemoMode = true;
@@ -264,6 +122,7 @@ class FirebaseService {
         if (userDoc.exists) {
           Map<String, dynamic> data = userDoc.data() as Map<String, dynamic>;
           currentUser = UserModel.fromMap(data);
+          startUsersSynchronizer();
           await saveSession(currentUser!.uid, currentUser!.role);
           return null; // Success
         } else {
@@ -353,6 +212,7 @@ class FirebaseService {
         await FirebaseFirestore.instance.collection('users').doc(newUser.uid).set(newUser.toMap());
         
         currentUser = newUser;
+        startUsersSynchronizer();
         await saveSession(currentUser!.uid, currentUser!.role);
         return null; // Success
       } on FirebaseAuthException catch (e) {
@@ -414,6 +274,9 @@ class FirebaseService {
   }
 
   static Future<void> signOut() async {
+    _usersSubscription?.cancel();
+    _usersSubscription = null;
+    _firestoreUsers = [];
     if (!useDemoMode) {
       await FirebaseAuth.instance.signOut();
     }
@@ -422,9 +285,9 @@ class FirebaseService {
   }
 
   // Database Streams (Real-Time)
-  static Stream<List<FoodItem>> streamFoodItems() {
+  static Stream<List<FoodItem>> streamFoodItems() async* {
     if (!useDemoMode) {
-      return FirebaseFirestore.instance.collection('meals').snapshots().map((snapshot) {
+      yield* FirebaseFirestore.instance.collection('meals').snapshots().map((snapshot) {
         return snapshot.docs.map((doc) {
           Map<String, dynamic> data = doc.data();
           data['id'] = doc.id;
@@ -432,13 +295,14 @@ class FirebaseService {
         }).toList();
       });
     } else {
-      return _foodStreamController.stream;
+      yield List.from(_mockFoodItems);
+      yield* _foodStreamController.stream.map((_) => List.from(_mockFoodItems));
     }
   }
 
-  static Stream<List<OrderModel>> streamOrders() {
+  static Stream<List<OrderModel>> streamOrders() async* {
     if (!useDemoMode) {
-      return FirebaseFirestore.instance.collection('orders').orderBy('createdAt', descending: true).snapshots().map((snapshot) {
+      yield* FirebaseFirestore.instance.collection('orders').orderBy('createdAt', descending: true).snapshots().map((snapshot) {
         return snapshot.docs.map((doc) {
           Map<String, dynamic> data = doc.data();
           data['id'] = doc.id;
@@ -446,7 +310,8 @@ class FirebaseService {
         }).toList();
       });
     } else {
-      return _orderStreamController.stream;
+      yield List.from(_mockOrders);
+      yield* _orderStreamController.stream.map((_) => List.from(_mockOrders));
     }
   }
 
@@ -695,6 +560,7 @@ class FirebaseService {
     double? minOrderAmount,
     String? restaurantLogo,
     String? restaurantDescription,
+    double? maxDeliveryDistance,
     String? role,
     String? status,
   }) async {
@@ -711,6 +577,7 @@ class FirebaseService {
         if (minOrderAmount != null) data['minOrderAmount'] = minOrderAmount;
         if (restaurantLogo != null) data['restaurantLogo'] = restaurantLogo;
         if (restaurantDescription != null) data['restaurantDescription'] = restaurantDescription;
+        if (maxDeliveryDistance != null) data['maxDeliveryDistance'] = maxDeliveryDistance;
         if (role != null) data['role'] = role;
         if (status != null) data['status'] = status;
         
@@ -727,6 +594,7 @@ class FirebaseService {
             minOrderAmount: minOrderAmount,
             restaurantLogo: restaurantLogo,
             restaurantDescription: restaurantDescription,
+            maxDeliveryDistance: maxDeliveryDistance,
             role: role,
             status: status,
           );
@@ -750,6 +618,7 @@ class FirebaseService {
           minOrderAmount: minOrderAmount,
           restaurantLogo: restaurantLogo,
           restaurantDescription: restaurantDescription,
+          maxDeliveryDistance: maxDeliveryDistance,
           role: role,
           status: status,
         );
@@ -800,16 +669,16 @@ class FirebaseService {
   // ─────────────────────────────────────────
 
 
-  static Stream<List<DeliveryAddress>> streamAddresses(String uid) {
+  static Stream<List<DeliveryAddress>> streamAddresses(String uid) async* {
     if (!useDemoMode) {
-      return FirebaseFirestore.instance
+      yield* FirebaseFirestore.instance
           .collection('users').doc(uid).collection('addresses')
           .snapshots()
           .map((s) => s.docs.map((d) => DeliveryAddress.fromMap(d.data())).toList());
+    } else {
+      yield List.from(_mockAddresses[uid] ?? []);
+      yield* _addressStreamController.stream.map((_) => List.from(_mockAddresses[uid] ?? []));
     }
-    Future.microtask(() =>
-        _addressStreamController.add(List.from(_mockAddresses[uid] ?? [])));
-    return _addressStreamController.stream;
   }
 
   static Future<String?> saveAddress(String uid, DeliveryAddress addr) async {
@@ -855,16 +724,16 @@ class FirebaseService {
   // ─────────────────────────────────────────
 
 
-  static Stream<List<RestaurantBranch>> streamBranches(String uid) {
+  static Stream<List<RestaurantBranch>> streamBranches(String uid) async* {
     if (!useDemoMode) {
-      return FirebaseFirestore.instance
+      yield* FirebaseFirestore.instance
           .collection('restaurants').doc(uid).collection('branches')
           .snapshots()
           .map((s) => s.docs.map((d) => RestaurantBranch.fromMap(d.data())).toList());
+    } else {
+      yield List.from(_mockBranches[uid] ?? []);
+      yield* _branchStreamController.stream.map((_) => List.from(_mockBranches[uid] ?? []));
     }
-    Future.microtask(() =>
-        _branchStreamController.add(List.from(_mockBranches[uid] ?? [])));
-    return _branchStreamController.stream;
   }
 
   static Future<String?> saveBranch(String uid, RestaurantBranch branch) async {
@@ -913,47 +782,43 @@ class FirebaseService {
   static final StreamController<List<DiscountCode>> _discountStreamController =
       StreamController<List<DiscountCode>>.broadcast();
 
-  static final List<DiscountCode> _mockDiscountCodes = [
-    DiscountCode(
-      id: 'dc_1',
-      code: 'HOSGELDIN20',
-      type: DiscountType.percentage,
-      value: 20,
-      restaurantOwnerId: 'demo_restaurant_1',
-      branchName: 'Tüm Şubeler',
-      minimumOrderAmount: 100,
-      stackable: false,
-      maxUses: 100,
-      currentUses: 3,
-      isActive: true,
-    ),
-  ];
+  static final List<DiscountCode> _mockDiscountCodes = MockData.getInitialDiscountCodes();
 
-  static Stream<List<DiscountCode>> streamDiscountCodes(String ownerUid) {
+  static Stream<List<DiscountCode>> streamDiscountCodes(String ownerUid) async* {
     if (!useDemoMode) {
-      return FirebaseFirestore.instance
+      yield* FirebaseFirestore.instance
           .collection('discount_codes')
           .where('restaurantOwnerId', isEqualTo: ownerUid)
           .snapshots()
           .map((s) => s.docs.map((d) => DiscountCode.fromMap(d.data())).toList());
+    } else {
+      yield _mockDiscountCodes.where((d) => d.restaurantOwnerId == ownerUid).toList();
+      yield* _discountStreamController.stream.map((_) =>
+          _mockDiscountCodes.where((d) => d.restaurantOwnerId == ownerUid).toList());
     }
-    Future.microtask(() => _discountStreamController.add(
-        _mockDiscountCodes.where((d) => d.restaurantOwnerId == ownerUid).toList()));
-    return _discountStreamController.stream;
   }
 
   static Future<String?> saveDiscountCode(DiscountCode code) async {
+    final hasEmptyId = code.id.isEmpty;
+    String finalId = code.id;
+    if (hasEmptyId) {
+      finalId = !useDemoMode 
+          ? FirebaseFirestore.instance.collection('discount_codes').doc().id 
+          : "disc_${DateTime.now().millisecondsSinceEpoch}";
+    }
+    final finalCode = code.copyWith(id: finalId);
+
     if (!useDemoMode) {
       try {
         await FirebaseFirestore.instance
-            .collection('discount_codes').doc(code.id).set(code.toMap());
+            .collection('discount_codes').doc(finalCode.id).set(finalCode.toMap());
         return null;
       } catch (e) {
         return e.toString();
       }
     } else {
-      final idx = _mockDiscountCodes.indexWhere((d) => d.id == code.id);
-      if (idx == -1) { _mockDiscountCodes.add(code); } else { _mockDiscountCodes[idx] = code; }
+      final idx = _mockDiscountCodes.indexWhere((d) => d.id == finalCode.id);
+      if (idx == -1) { _mockDiscountCodes.add(finalCode); } else { _mockDiscountCodes[idx] = finalCode; }
       _discountStreamController.add(List.from(_mockDiscountCodes));
       return null;
     }
@@ -1002,6 +867,28 @@ class FirebaseService {
     }
   }
 
+  // Deterministic, realistic distance generator between two text addresses
+  static String calculateDistanceString(String addr1, String addr2) {
+    if (addr1.isEmpty || addr2.isEmpty) return "350 m";
+
+    // Simple deterministic hash of both addresses combined
+    int hash = 0;
+    final combined = "${addr1.toLowerCase().trim()}_${addr2.toLowerCase().trim()}";
+    for (int i = 0; i < combined.length; i++) {
+      hash = combined.codeUnitAt(i) + ((hash << 5) - hash);
+    }
+
+    // Normalize to a realistic delivery distance between 150 and 2400 meters
+    final int meters = 150 + (hash.abs() % 2251);
+
+    if (meters >= 1000) {
+      final double km = meters / 1000.0;
+      return "${km.toStringAsFixed(1)} km";
+    } else {
+      return "$meters m";
+    }
+  }
+
   // ─────────────────────────────────────────
   // NEARBY RESTAURANTS (text-based matching)
   // ─────────────────────────────────────────
@@ -1042,19 +929,16 @@ class FirebaseService {
       StreamController<List<String>>.broadcast();
   static final List<String> _mockCategories = ["Çorba", "Ana Yemek", "Tatlı", "İçecek"];
 
-  static Stream<List<String>> streamCategories() {
+  static Stream<List<String>> streamCategories() async* {
     if (!useDemoMode) {
-      return FirebaseFirestore.instance
+      yield* FirebaseFirestore.instance
           .collection('categories')
           .snapshots()
           .map((s) => s.docs.map((d) => d.id).toList());
+    } else {
+      yield List.from(_mockCategories);
+      yield* _categoryStreamController.stream.map((_) => List.from(_mockCategories));
     }
-    Future.microtask(() {
-      if (!_categoryStreamController.isClosed) {
-        _categoryStreamController.add(List.from(_mockCategories));
-      }
-    });
-    return _categoryStreamController.stream;
   }
 
   static Future<String?> addCategory(String categoryName) async {
@@ -1098,7 +982,7 @@ class FirebaseService {
       StreamController<List<ChatSession>>.broadcast();
   static final Map<String, StreamController<ChatSession>> _chatRoomControllers = {};
 
-  static final List<ChatSession> _mockChatSessions = [];
+  static final List<ChatSession> _mockChatSessions = MockData.getInitialChatSessions();
 
   /// Customer: open a new support session (or return existing open one) associated with a specific order
   static Future<ChatSession?> startChatSession([String? orderId]) async {
@@ -1338,6 +1222,228 @@ class FirebaseService {
         _chatSessionsController.add(List.from(_mockChatSessions));
         _chatRoomControllers[sessionId]?.add(_mockChatSessions[idx]);
       }
+    }
+  }
+
+  // ─────────────────────────────────────────
+  // BRANCH INVITATIONS
+  // ─────────────────────────────────────────
+
+  /// Send a branch manager invitation to a customer by email
+  static Future<String?> sendBranchInvitation(String email) async {
+    final sender = currentUser;
+    if (sender == null) return "Lütfen oturum açın.";
+
+    final cleanEmail = email.trim().toLowerCase();
+    if (cleanEmail.isEmpty) return "Lütfen geçerli bir e-posta adresi girin.";
+
+    if (!useDemoMode) {
+      try {
+        // 1. Find user by email in Firestore
+        final userSnap = await FirebaseFirestore.instance
+            .collection('users')
+            .where('email', isEqualTo: cleanEmail)
+            .limit(1)
+            .get();
+
+        if (userSnap.docs.isEmpty) {
+          return "Bu e-posta adresine sahip bir kullanıcı bulunamadı.";
+        }
+
+        final invitee = UserModel.fromMap(userSnap.docs.first.data());
+
+        // 2. Validate role is customer
+        if (invitee.role != 'customer') {
+          return "Sadece normal müşterileri şube yetkilisi olarak davet edebilirsiniz.";
+        }
+
+        // 3. Check for existing pending invitation
+        final inviteSnap = await FirebaseFirestore.instance
+            .collection('branch_invitations')
+            .where('restaurantOwnerId', isEqualTo: sender.uid)
+            .where('inviteeUid', isEqualTo: invitee.uid)
+            .where('status', isEqualTo: 'pending')
+            .limit(1)
+            .get();
+
+        if (inviteSnap.docs.isNotEmpty) {
+          return "Bu kullanıcıya zaten gönderilmiş bekleyen bir davetiniz bulunuyor.";
+        }
+
+        // 4. Create new invitation
+        final inviteId = 'invite_${DateTime.now().millisecondsSinceEpoch}';
+        final invitation = BranchInvitation(
+          id: inviteId,
+          restaurantOwnerId: sender.uid,
+          restaurantName: sender.restaurantName.isNotEmpty ? sender.restaurantName : 'Şube Sahibi',
+          inviteeEmail: invitee.email,
+          inviteeUid: invitee.uid,
+          status: 'pending',
+          createdAt: DateTime.now(),
+        );
+
+        await FirebaseFirestore.instance
+            .collection('branch_invitations')
+            .doc(inviteId)
+            .set(invitation.toMap());
+
+        return null;
+      } catch (e) {
+        return e.toString();
+      }
+    } else {
+      // Offline Demo Mode Logic
+      // 1. Find mock user
+      final idx = _mockUsers.indexWhere((u) => u.email.toLowerCase() == cleanEmail);
+      if (idx == -1) {
+        return "Bu e-posta adresine sahip bir kullanıcı bulunamadı.";
+      }
+
+      final invitee = _mockUsers[idx];
+
+      // 2. Validate role is customer
+      if (invitee.role != 'customer') {
+        return "Sadece normal müşterileri şube yetkilisi olarak davet edebilirsiniz.";
+      }
+
+      // 3. Check for existing pending invitation
+      final alreadyExists = _mockBranchInvitations.any((invite) =>
+          invite.restaurantOwnerId == sender.uid &&
+          invite.inviteeUid == invitee.uid &&
+          invite.status == 'pending');
+
+      if (alreadyExists) {
+        return "Bu kullanıcıya zaten gönderilmiş bekleyen bir davetiniz bulunuyor.";
+      }
+
+      // 4. Create new invitation
+      final inviteId = 'invite_${DateTime.now().millisecondsSinceEpoch}';
+      final invitation = BranchInvitation(
+        id: inviteId,
+        restaurantOwnerId: sender.uid,
+        restaurantName: sender.restaurantName.isNotEmpty ? sender.restaurantName : 'Şube Sahibi',
+        inviteeEmail: invitee.email,
+        inviteeUid: invitee.uid,
+        status: 'pending',
+        createdAt: DateTime.now(),
+      );
+
+      _mockBranchInvitations.add(invitation);
+      _invitationsStreamController.add(List.from(_mockBranchInvitations));
+      return null;
+    }
+  }
+
+  /// Stream pending invitations for the current user
+  static Stream<List<BranchInvitation>> streamBranchInvitations() async* {
+    final user = currentUser;
+    if (user == null) {
+      yield [];
+      return;
+    }
+
+    if (!useDemoMode) {
+      yield* FirebaseFirestore.instance
+          .collection('branch_invitations')
+          .where('inviteeUid', isEqualTo: user.uid)
+          .where('status', isEqualTo: 'pending')
+          .snapshots()
+          .map((s) => s.docs.map((d) => BranchInvitation.fromMap(d.data())).toList());
+    } else {
+      yield _mockBranchInvitations
+          .where((invite) => invite.inviteeUid == user.uid && invite.status == 'pending')
+          .toList();
+
+      yield* _invitationsStreamController.stream.map((list) => list
+          .where((invite) => invite.inviteeUid == user.uid && invite.status == 'pending')
+          .toList());
+    }
+  }
+
+  /// Respond to a branch invitation
+  static Future<String?> respondToBranchInvitation(String inviteId, bool accept) async {
+    final user = currentUser;
+    if (user == null) return "Lütfen oturum açın.";
+
+    if (!useDemoMode) {
+      try {
+        final docRef = FirebaseFirestore.instance.collection('branch_invitations').doc(inviteId);
+        final inviteSnap = await docRef.get();
+        if (!inviteSnap.exists) return "Davet bulunamadı.";
+
+        final invitation = BranchInvitation.fromMap(inviteSnap.data()!);
+
+        if (accept) {
+          // 1. Get inviting restaurant owner's details
+          final ownerSnap = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(invitation.restaurantOwnerId)
+              .get();
+
+          String rName = 'Mahmut Usta Kebap Evi';
+          String rAddress = 'Kadıköy, İstanbul';
+
+          if (ownerSnap.exists) {
+            final owner = UserModel.fromMap(ownerSnap.data()!);
+            rName = owner.restaurantName.isNotEmpty ? owner.restaurantName : rName;
+            rAddress = owner.restaurantAddress.isNotEmpty ? owner.restaurantAddress : rAddress;
+          }
+
+          // 2. Update user's role and copying restaurant details
+          await FirebaseFirestore.instance.collection('users').doc(user.uid).update({
+            'role': 'restaurant_owner',
+            'restaurantName': rName,
+            'restaurantAddress': rAddress,
+          });
+
+          // Update local currentUser state
+          currentUser = user.copyWith(
+            role: 'restaurant_owner',
+            restaurantName: rName,
+            restaurantAddress: rAddress,
+          );
+        }
+
+        // Update invitation status
+        await docRef.update({'status': accept ? 'accepted' : 'declined'});
+        return null;
+      } catch (e) {
+        return e.toString();
+      }
+    } else {
+      // Offline Demo Mode Logic
+      final idx = _mockBranchInvitations.indexWhere((invite) => invite.id == inviteId);
+      if (idx == -1) return "Davet bulunamadı.";
+
+      final invitation = _mockBranchInvitations[idx];
+
+      if (accept) {
+        // 1. Find inviting owner
+        final ownerIdx = _mockUsers.indexWhere((u) => u.uid == invitation.restaurantOwnerId);
+        String rName = 'Mahmut Usta Kebap Evi';
+        String rAddress = 'Kadıköy, İstanbul';
+
+        if (ownerIdx != -1) {
+          rName = _mockUsers[ownerIdx].restaurantName.isNotEmpty ? _mockUsers[ownerIdx].restaurantName : rName;
+          rAddress = _mockUsers[ownerIdx].restaurantAddress.isNotEmpty ? _mockUsers[ownerIdx].restaurantAddress : rAddress;
+        }
+
+        // 2. Update invitee role in mock users
+        final userIdx = _mockUsers.indexWhere((u) => u.uid == user.uid);
+        if (userIdx != -1) {
+          _mockUsers[userIdx] = _mockUsers[userIdx].copyWith(
+            role: 'restaurant_owner',
+            restaurantName: rName,
+            restaurantAddress: rAddress,
+          );
+          currentUser = _mockUsers[userIdx];
+          _usersStreamController.add(List.from(_mockUsers));
+        }
+      }
+
+      _mockBranchInvitations[idx].status = accept ? 'accepted' : 'declined';
+      _invitationsStreamController.add(List.from(_mockBranchInvitations));
+      return null;
     }
   }
 }
