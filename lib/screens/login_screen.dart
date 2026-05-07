@@ -22,9 +22,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
   bool _isPasswordObscured = true;
   bool _isLoading = false;
   
-  // Segmented Control State: 0 for Müşteri, 1 for Restoran
-  int _selectedRoleIndex = 0;
-  final List<String> _roleOptions = ["Müşteri Girişi", "Restoran Girişi"];
+
 
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
@@ -47,6 +45,38 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ThemeController().updateRole('customer');
     });
+
+    _checkAutoLogin();
+  }
+
+  bool _isAutoLoginChecking = true;
+
+  Future<void> _checkAutoLogin() async {
+    final user = await FirebaseService.tryAutoLogin();
+    if (user != null) {
+      if (mounted) {
+        // Update Theme role context to correct user role
+        ThemeController().updateRole(user.role);
+
+        if (user.role == 'customer') {
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => const CustomerDashboard()),
+            (route) => false,
+          );
+        } else {
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => const RestaurantDashboard()),
+            (route) => false,
+          );
+        }
+      }
+    } else {
+      if (mounted) {
+        setState(() {
+          _isAutoLoginChecking = false;
+        });
+      }
+    }
   }
 
   @override
@@ -57,15 +87,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     super.dispose();
   }
 
-  // Segmented control onChanged: trigger the required 'update_ui_theme' callback
-  void _updateUiTheme(int index) {
-    setState(() {
-      _selectedRoleIndex = index;
-    });
-    // Triggers the reactive theme update
-    final role = index == 0 ? 'customer' : 'restaurant_owner';
-    ThemeController().updateRole(role);
-  }
+
 
   // Reset password action
   Future<void> _handlePasswordReset() async {
@@ -97,12 +119,10 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
 
     final email = _emailController.text.trim();
     final password = _passwordController.text;
-    final role = _selectedRoleIndex == 0 ? 'customer' : 'restaurant_owner';
 
     final error = await FirebaseService.signIn(
       email: email,
       password: password,
-      role: role,
     );
 
     setState(() => _isLoading = false);
@@ -111,8 +131,10 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     if (error != null) {
       _showErrorSnackBar(error);
     } else {
-      // Navigate to the correct Dashboard on success
-      final actualRole = FirebaseService.currentUser?.role ?? role;
+      // Navigate to the correct Dashboard dynamically based on their actual database profile role
+      final actualRole = FirebaseService.currentUser?.role ?? 'customer';
+      ThemeController().updateRole(actualRole);
+
       if (actualRole == 'customer') {
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const CustomerDashboard()),
@@ -177,8 +199,31 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
 
   @override
   Widget build(BuildContext context) {
+    if (_isAutoLoginChecking) {
+      return const Scaffold(
+        backgroundColor: Color(0xFF0F0F10),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CupertinoActivityIndicator(radius: 18, color: Colors.amber),
+              SizedBox(height: 16),
+              Text(
+                "Oturum Kontrol Ediliyor...",
+                style: TextStyle(
+                  color: Colors.white60,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     final theme = Theme.of(context);
-    final isCustomer = _selectedRoleIndex == 0;
 
     return Scaffold(
       body: Stack(
@@ -288,7 +333,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                               ],
                             ),
                             child: Icon(
-                              isCustomer ? Icons.restaurant_menu_rounded : Icons.storefront_rounded,
+                              Icons.restaurant_menu_rounded,
                               size: 52,
                               color: theme.primaryColor,
                             ),
@@ -316,60 +361,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                         ),
                         const SizedBox(height: 36),
 
-                        // Custom Sliding Segmented Control for user_role
-                        Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(
-                            color: theme.cardColor,
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                              color: Colors.white.withValues(alpha: 0.05),
-                            ),
-                          ),
-                          child: Row(
-                            children: List.generate(_roleOptions.length, (index) {
-                              final isSelected = _selectedRoleIndex == index;
-                              return Expanded(
-                                child: GestureDetector(
-                                  onTap: () => _updateUiTheme(index),
-                                  child: AnimatedContainer(
-                                    duration: const Duration(milliseconds: 300),
-                                    curve: Curves.easeInOut,
-                                    padding: const EdgeInsets.symmetric(vertical: 14),
-                                    decoration: BoxDecoration(
-                                      color: isSelected 
-                                          ? theme.primaryColor 
-                                          : Colors.transparent,
-                                      borderRadius: BorderRadius.circular(16),
-                                      boxShadow: isSelected 
-                                          ? [
-                                              BoxShadow(
-                                                color: theme.primaryColor.withValues(alpha: 0.3),
-                                                blurRadius: 8,
-                                                offset: const Offset(0, 2),
-                                              )
-                                            ]
-                                          : [],
-                                    ),
-                                    child: Center(
-                                      child: Text(
-                                        _roleOptions[index],
-                                        style: GoogleFonts.outfit(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 14,
-                                          color: isSelected 
-                                              ? (isCustomer ? Colors.white : Colors.black) 
-                                              : Colors.white60,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              );
-                            }),
-                          ),
-                        ),
-                        const SizedBox(height: 28),
+
 
                         // E-posta Adresi Text Field
                         TextFormField(

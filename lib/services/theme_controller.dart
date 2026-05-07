@@ -21,25 +21,12 @@ class ThemeController extends ChangeNotifier {
     }
   }
 
-  // Get active ThemeData based on the selected role
+  // Get active ThemeData (Unified Premium Sunset Orange theme for everyone)
   ThemeData get activeTheme {
-    final bool isCustomer = _currentRole == 'customer';
-    
-    final Color primaryColor = isCustomer 
-        ? const Color(0xFFFF5722) // Sunset Orange for hunger and warmth
-        : const Color(0xFF06D6A0); // Vibrant Emerald Green for business & analytics
-        
-    final Color secondaryColor = isCustomer 
-        ? const Color(0xFFFFB703) // Warm Honey Amber
-        : const Color(0xFF4361EE); // High-Tech Indigo
-
-    final Color scaffoldBg = isCustomer 
-        ? const Color(0xFF110E0C) // Charcoal Brown (appetizing, deep dark)
-        : const Color(0xFF0A0F1D); // Cyber slate/navy for analytics look
-
-    final Color cardBg = isCustomer 
-        ? const Color(0xFF1E1715) // Deep reddish-brown card
-        : const Color(0xFF131B2E); // Sleek slate navy card
+    final Color primaryColor = const Color(0xFFFF5722); // Sunset Orange for hunger and warmth
+    final Color secondaryColor = const Color(0xFFFFB703); // Warm Honey Amber
+    final Color scaffoldBg = const Color(0xFF110E0C); // Charcoal Brown (appetizing, deep dark)
+    final Color cardBg = const Color(0xFF1E1715); // Deep reddish-brown card
 
     final TextTheme baseTextTheme = ThemeData.dark().textTheme;
 
@@ -53,7 +40,7 @@ class ThemeController extends ChangeNotifier {
         primary: primaryColor,
         secondary: secondaryColor,
         surface: cardBg,
-        onPrimary: isCustomer ? Colors.white : Colors.black,
+        onPrimary: Colors.white,
         onSecondary: Colors.white,
         error: const Color(0xFFEF4444),
       ),
@@ -71,7 +58,7 @@ class ThemeController extends ChangeNotifier {
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
           backgroundColor: primaryColor,
-          foregroundColor: isCustomer ? Colors.white : Colors.black,
+          foregroundColor: Colors.white,
           minimumSize: const Size(double.infinity, 56),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),

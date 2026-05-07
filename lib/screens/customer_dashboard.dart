@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'dart:async';
 import '../models/models.dart';
 import '../services/firebase_service.dart';
+import '../services/location_api_service.dart';
 import 'login_screen.dart';
 import 'restaurant_dashboard.dart';
 import 'live_support_screen.dart';
@@ -22,8 +24,99 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
   TextEditingController? _phoneController;
   TextEditingController? _addressController;
 
+  StreamSubscription<List<OrderModel>>? _ordersSubscription;
+  final Map<String, String> _lastStatuses = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _ordersSubscription = FirebaseService.streamOrders().listen((orders) {
+      final customerId = FirebaseService.currentUser?.uid;
+      if (customerId == null) return;
+
+      for (var order in orders) {
+        if (order.customerId == customerId) {
+          final prevStatus = _lastStatuses[order.id];
+          if (prevStatus != null && prevStatus != order.status) {
+            // Status updated! Trigger custom overlay notification!
+            _showTopNotification(order);
+          }
+          _lastStatuses[order.id] = order.status;
+        }
+      }
+    });
+  }
+
+  void _showTopNotification(OrderModel order) {
+    final overlayState = Overlay.of(context);
+    late OverlayEntry overlayEntry;
+
+    String statusTitle = "Sipariş Güncellemesi";
+    String statusDesc = "Siparişinizin durumu güncellendi.";
+    IconData icon = Icons.notifications_active;
+    Color color = const Color(0xFFFF9F43);
+
+    switch (order.status) {
+      case 'pending':
+        statusTitle = "Sipariş Alındı";
+        statusDesc = "Siparişiniz restoran tarafından onay bekliyor.";
+        icon = Icons.hourglass_empty;
+        color = Colors.white54;
+        break;
+      case 'preparing':
+        statusTitle = "Sipariş Hazırlanıyor 🍳";
+        statusDesc = "Leziz siparişiniz sevgiyle hazırlanıyor!";
+        icon = Icons.restaurant;
+        color = const Color(0xFFFF9F43);
+        break;
+      case 'on_the_way':
+        statusTitle = "Sipariş Yolda! 🛵";
+        statusDesc = "Siparişiniz kuryemizle kapınıza doğru yola çıktı.";
+        icon = Icons.delivery_dining;
+        color = const Color(0xFF10B981);
+        break;
+      case 'ready_for_pickup':
+        statusTitle = "Sipariş Hazır! 🛍️";
+        statusDesc = "Gel-Al siparişiniz hazır! İstediğiniz zaman teslim alabilirsiniz.";
+        icon = Icons.shopping_bag;
+        color = const Color(0xFF10B981);
+        break;
+      case 'delivered':
+        statusTitle = "Sipariş Teslim Edildi 🎉";
+        statusDesc = "Afiyet olsun! Siparişiniz başarıyla teslim edildi.";
+        icon = Icons.check_circle;
+        color = const Color(0xFF10B981);
+        break;
+    }
+
+    overlayEntry = OverlayEntry(
+      builder: (context) {
+        return Positioned(
+          top: MediaQuery.of(context).padding.top + 16,
+          left: 16,
+          right: 16,
+          child: Material(
+            color: Colors.transparent,
+            child: _AnimatedNotificationToast(
+              title: statusTitle,
+              desc: statusDesc,
+              icon: icon,
+              color: color,
+              onDismiss: () {
+                overlayEntry.remove();
+              },
+            ),
+          ),
+        );
+      },
+    );
+
+    overlayState.insert(overlayEntry);
+  }
+
   @override
   void dispose() {
+    _ordersSubscription?.cancel();
     _phoneController?.dispose();
     _addressController?.dispose();
     super.dispose();
@@ -31,16 +124,6 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
 
   // Shopping Cart state
   final Map<String, OrderItem> _cart = {};
-
-  final List<String> _categories = [
-    "Hepsi",
-    "Kebaplar",
-    "Dönerler",
-    "Burgerler",
-    "Pizzalar",
-    "Tatlılar",
-    "İçecekler"
-  ];
 
   double get _cartTotal {
     double total = 0;
@@ -118,6 +201,11 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
     DiscountCode? appliedDiscount;
     String discountError = "";
     final TextEditingController couponController = TextEditingController();
+    final TextEditingController noteController = TextEditingController();
+    final Future<UserModel?>? restFuture = _cart.isNotEmpty
+        ? FirebaseService.getUserById(_cart.values.first.foodItem.restaurantOwnerId)
+        : null;
+    bool isTakeawaySelected = false;
 
     showModalBottomSheet(
       context: context,
@@ -126,13 +214,16 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setModalState) {
+            final user = FirebaseService.currentUser;
             final double subtotal = _cartTotal;
             double discountAmount = 0.0;
             if (appliedDiscount != null) {
               discountAmount = appliedDiscount!.calculateDiscount(subtotal);
             }
             final double finalSubtotal = (subtotal - discountAmount) < 0 ? 0 : (subtotal - discountAmount);
-            final double deliveryFee = finalSubtotal > 200 || finalSubtotal == 0 ? 0 : 30;
+            final double deliveryFee = isTakeawaySelected
+                ? 0.0
+                : (finalSubtotal > 200 || finalSubtotal == 0 ? 0 : 30);
             final double total = finalSubtotal + deliveryFee;
 
             return Container(
@@ -398,7 +489,282 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                     ],
                     const SizedBox(height: 12),
                     const Divider(color: Colors.white12),
+                    const SizedBox(height: 8),
+                    // Delivery Method Selection Buttons
+                    Row(
+                      children: [
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () {
+                              setModalState(() {
+                                isTakeawaySelected = false;
+                              });
+                            },
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              decoration: BoxDecoration(
+                                color: !isTakeawaySelected 
+                                    ? Theme.of(context).primaryColor.withValues(alpha: 0.15) 
+                                    : Colors.white.withValues(alpha: 0.02),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: !isTakeawaySelected 
+                                      ? Theme.of(context).primaryColor 
+                                      : Colors.white.withValues(alpha: 0.08),
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.delivery_dining_rounded, 
+                                    color: !isTakeawaySelected ? Theme.of(context).primaryColor : Colors.white54, 
+                                    size: 16,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    "Adrese Teslimat",
+                                    style: GoogleFonts.outfit(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                      color: !isTakeawaySelected ? Colors.white : Colors.white54,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () {
+                              setModalState(() {
+                                isTakeawaySelected = true;
+                              });
+                            },
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              decoration: BoxDecoration(
+                                color: isTakeawaySelected 
+                                    ? Theme.of(context).primaryColor.withValues(alpha: 0.15) 
+                                    : Colors.white.withValues(alpha: 0.02),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: isTakeawaySelected 
+                                      ? Theme.of(context).primaryColor 
+                                      : Colors.white.withValues(alpha: 0.08),
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.shopping_bag_rounded, 
+                                    color: isTakeawaySelected ? Theme.of(context).primaryColor : Colors.white54, 
+                                    size: 16,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    "Gel-Al (Pick-up)",
+                                    style: GoogleFonts.outfit(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                      color: isTakeawaySelected ? Colors.white : Colors.white54,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 12),
+
+                    // Conditionally show Address Picker or Takeaway Instructions
+                    if (isTakeawaySelected)
+                      FutureBuilder<UserModel?>(
+                        future: restFuture,
+                        builder: (context, restSnap) {
+                          final restUser = restSnap.data;
+                          final restName = restUser?.restaurantName.isNotEmpty == true ? restUser!.restaurantName : "Restoran Merkez Şubesi";
+                          final restAddr = restUser?.restaurantAddress.isNotEmpty == true ? restUser!.restaurantAddress : "Restoran Şubesi";
+
+                          return Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).primaryColor.withValues(alpha: 0.06),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(color: Theme.of(context).primaryColor.withValues(alpha: 0.15)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Icon(Icons.storefront_rounded, color: Theme.of(context).primaryColor, size: 18),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      "Gel-Al Teslim Noktası",
+                                      style: GoogleFonts.outfit(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  restName,
+                                  style: GoogleFonts.outfit(fontSize: 13, fontWeight: FontWeight.bold, color: Theme.of(context).primaryColor),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  restAddr,
+                                  style: GoogleFonts.outfit(fontSize: 11, color: Colors.white70),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  "💡 Siparişiniz hazırlandığında bilgilendirileceksiniz. Lütfen restoranımıza gelerek sıcak sıcak teslim alınız.",
+                                  style: GoogleFonts.outfit(fontSize: 10, color: Colors.white38, fontStyle: FontStyle.italic),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      )
+                    else
+                      // Delivery Address Selection Section inside Cart
+                      StreamBuilder<List<DeliveryAddress>>(
+                        stream: FirebaseService.streamAddresses(user!.uid),
+                        builder: (context, addrSnapshot) {
+                          final addresses = addrSnapshot.data ?? [];
+                          final hasSelected = user.address.isNotEmpty;
+                          
+                          return Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.02),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: hasSelected 
+                                    ? Theme.of(context).primaryColor.withValues(alpha: 0.2) 
+                                    : Colors.redAccent.withValues(alpha: 0.3),
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.location_on_rounded, 
+                                      color: hasSelected ? Theme.of(context).primaryColor : Colors.redAccent, 
+                                      size: 18,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      "Teslimat Adresi",
+                                      style: GoogleFonts.outfit(
+                                        fontSize: 12, 
+                                        fontWeight: FontWeight.bold, 
+                                        color: hasSelected ? Colors.white : Colors.redAccent,
+                                      ),
+                                    ),
+                                    const Spacer(),
+                                    if (addresses.isNotEmpty)
+                                      PopupMenuButton<DeliveryAddress>(
+                                        icon: Icon(Icons.swap_horiz_rounded, color: Theme.of(context).primaryColor, size: 18),
+                                        tooltip: "Adresi Değiştir",
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(),
+                                        onSelected: (addr) async {
+                                          await FirebaseService.selectAddress(user.uid, addr.id, addr.fullAddress, addr.phone);
+                                          setModalState(() {});
+                                          setState(() {});
+                                        },
+                                        itemBuilder: (context) {
+                                          return addresses.map((addr) {
+                                            return PopupMenuItem<DeliveryAddress>(
+                                              value: addr,
+                                              child: Text(
+                                                "${addr.title}: ${addr.fullAddress}",
+                                                style: GoogleFonts.outfit(fontSize: 12),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            );
+                                          }).toList();
+                                        },
+                                      )
+                                    else
+                                      GestureDetector(
+                                        onTap: () {
+                                          Navigator.pop(context); // close cart
+                                          setState(() {
+                                            _currentTab = 2; // Swap to profile
+                                          });
+                                        },
+                                        child: Text(
+                                          "+ Adres Ekle",
+                                          style: GoogleFonts.outfit(
+                                            fontSize: 12, 
+                                            fontWeight: FontWeight.bold, 
+                                            color: Theme.of(context).primaryColor,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  hasSelected 
+                                      ? user.address 
+                                      : "Lütfen sipariş için bir teslimat adresi belirleyin.",
+                                  style: GoogleFonts.outfit(
+                                    fontSize: 11, 
+                                    color: hasSelected ? Colors.white60 : Colors.redAccent.withValues(alpha: 0.8),
+                                  ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                     const SizedBox(height: 8),
+                    const Divider(color: Colors.white12),
+                    const SizedBox(height: 12),
+
+                    // Premium Custom Order Note Input Field
+                    TextField(
+                      controller: noteController,
+                      style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        filled: true,
+                        fillColor: Colors.white.withValues(alpha: 0.02),
+                        hintText: "Sipariş Notu Ekle (örn. Kapıyı çalmayın)",
+                        hintStyle: GoogleFonts.outfit(color: Colors.white38, fontSize: 13),
+                        prefixIcon: const Icon(Icons.note_alt_outlined, color: Colors.white38, size: 18),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.05)),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: BorderSide(color: Theme.of(context).primaryColor.withValues(alpha: 0.3)),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.03)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -410,21 +776,99 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                       ],
                     ),
                     const SizedBox(height: 20),
-                    ElevatedButton(
-                      onPressed: () async {
-                        Navigator.of(context).pop(); // Close bottom sheet
-                        _placeCustomerOrder(total);
+
+                    // Pre-fetch restaurant limits validation inside FutureBuilder
+                    FutureBuilder<UserModel?>(
+                      future: restFuture,
+                      builder: (context, snapshot) {
+                        final restUser = snapshot.data;
+                        final bool underMin = restUser != null && restUser.minOrderAmount > 0 && total < restUser.minOrderAmount;
+
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (underMin) ...[
+                              Container(
+                                margin: const EdgeInsets.only(bottom: 14),
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: Colors.redAccent.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(color: Colors.redAccent.withValues(alpha: 0.2)),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 18),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        "Minimum sipariş tutarı ${restUser.minOrderAmount.toStringAsFixed(0)} TL'dir. Sipariş için sepetinize ${(restUser.minOrderAmount - total).toStringAsFixed(0)} TL değerinde daha ürün eklemelisiniz.",
+                                        style: GoogleFonts.outfit(color: Colors.redAccent, fontSize: 11, fontWeight: FontWeight.bold),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+
+                            ElevatedButton(
+                              onPressed: () async {
+                                if (underMin) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        "Minimum sipariş tutarı ${restUser.minOrderAmount.toStringAsFixed(0)} TL'dir.",
+                                        style: GoogleFonts.outfit(fontWeight: FontWeight.bold),
+                                      ),
+                                      backgroundColor: Colors.redAccent,
+                                    ),
+                                  );
+                                  return;
+                                }
+
+                                final u = FirebaseService.currentUser;
+                                // Only require address verification if NOT doing takeaway/pickup!
+                                if (!isTakeawaySelected && (u == null || u.address.isEmpty)) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        "Lütfen sipariş vermeden önce geçerli bir teslimat adresi seçin.", 
+                                        style: GoogleFonts.outfit(fontWeight: FontWeight.bold),
+                                      ),
+                                      backgroundColor: Colors.redAccent,
+                                    ),
+                                  );
+                                  return;
+                                }
+
+                                Navigator.of(context).pop(); // Close bottom sheet
+                                _placeCustomerOrder(total, isTakeaway: isTakeawaySelected, note: noteController.text.trim());
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: underMin ? Colors.white12 : Theme.of(context).primaryColor,
+                                foregroundColor: underMin ? Colors.white30 : Colors.black,
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text(underMin 
+                                      ? "Minimum Tutara Ulaşılmadı" 
+                                      : (isTakeawaySelected ? "Gel-Al Siparişi Onayla" : "Siparişi Onayla")),
+                                  const SizedBox(width: 8),
+                                  Icon(underMin 
+                                      ? Icons.lock_outline_rounded 
+                                      : (isTakeawaySelected ? Icons.shopping_bag_outlined : Icons.payment), 
+                                      size: 18),
+                                ],
+                              ),
+                            ),
+                          ],
+                        );
                       },
-                      child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text("Siparişi Onayla"),
-                          SizedBox(width: 8),
-                          Icon(Icons.payment, size: 18),
-                        ],
-                      ),
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 10), const SizedBox(height: 10),
                   ]
                 ],
               ),
@@ -436,7 +880,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
   }
 
   // Handle Checkout Action
-  Future<void> _placeCustomerOrder(double totalAmount) async {
+  Future<void> _placeCustomerOrder(double totalAmount, {bool isTakeaway = false, String? note}) async {
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -448,6 +892,8 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
     final error = await FirebaseService.placeOrder(
       _cart.values.toList(),
       totalAmount,
+      isTakeaway: isTakeaway,
+      note: note,
     );
 
     if (mounted) Navigator.of(context).pop(); // Dismiss loading spinner
@@ -568,6 +1014,13 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
 
   @override
   Widget build(BuildContext context) {
+    if (FirebaseService.currentUser == null) {
+      return const Scaffold(
+        body: Center(
+          child: CupertinoActivityIndicator(radius: 12, color: Colors.white),
+        ),
+      );
+    }
     final theme = Theme.of(context);
     final user = FirebaseService.currentUser;
     final String greetingName = user != null ? user.fullName.split(' ')[0] : 'Misafir';
@@ -701,6 +1154,48 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                 style: GoogleFonts.outfit(fontSize: 14, color: Colors.white38),
               ),
             ],
+          ),
+        ),
+
+        // Active Delivery Address Banner
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+          child: InkWell(
+            onTap: () {
+              setState(() {
+                _currentTab = 2; // Swap to Profile tab
+              });
+            },
+            borderRadius: BorderRadius.circular(16),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: theme.primaryColor.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: theme.primaryColor.withValues(alpha: 0.15)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.location_on_rounded, color: theme.primaryColor, size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      user?.address.isNotEmpty == true 
+                          ? "Teslimat: ${user!.address}" 
+                          : "Lütfen bir teslimat adresi seçin (Tıklayın)",
+                      style: GoogleFonts.outfit(
+                        fontSize: 11, 
+                        fontWeight: FontWeight.bold, 
+                        color: user?.address.isNotEmpty == true ? Colors.white70 : theme.primaryColor,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right_rounded, color: Colors.white38, size: 16),
+                ],
+              ),
+            ),
           ),
         ),
 
@@ -856,13 +1351,14 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
 
               final allItems = snapshot.data ?? [];
               
-              // Filter food items based on Search query & Category chip selected
+              // Filter food items based on Search query, Category & Restaurant approval status
               final filteredItems = allItems.where((item) {
                 final matchQuery = item.name.toLowerCase().contains(_searchQuery) ||
                                    item.description.toLowerCase().contains(_searchQuery) ||
                                    item.category.toLowerCase().contains(_searchQuery);
                 final matchCategory = _selectedCategory == "Hepsi" || item.category == _selectedCategory;
-                return matchQuery && matchCategory;
+                final isRestaurantActive = FirebaseService.isRestaurantOwnerActiveSync(item.restaurantOwnerId);
+                return matchQuery && matchCategory && isRestaurantActive;
               }).toList();
 
               if (filteredItems.isEmpty) {
@@ -1181,6 +1677,112 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton.icon(
+                        onPressed: () async {
+                          showDialog(
+                            context: context,
+                            barrierDismissible: false,
+                            builder: (_) => const Center(child: CupertinoActivityIndicator(radius: 12, color: Colors.white)),
+                          );
+                          final session = await FirebaseService.startChatSession(order.id);
+                          if (context.mounted) Navigator.pop(context); // close loader
+                          if (session != null && context.mounted) {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (_) => LiveSupportScreen(session: session)),
+                            );
+                          }
+                        },
+                        icon: const Icon(Icons.support_agent_rounded, size: 16, color: Colors.amber),
+                        label: Text(
+                          "Sipariş Hakkında Destek Al",
+                          style: GoogleFonts.outfit(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                            color: Colors.amber,
+                          ),
+                        ),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          backgroundColor: Colors.white.withValues(alpha: 0.03),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            side: BorderSide(color: Colors.amber.withValues(alpha: 0.2)),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  // Interactive Rating Section for Delivered Orders
+                  if (order.status == 'delivered') ...[
+                    const SizedBox(height: 18),
+                    const Divider(color: Colors.white10),
+                    const SizedBox(height: 10),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          order.rating != null ? "Değerlendirmeniz:" : "Siparişi Değerlendirin:",
+                          style: GoogleFonts.outfit(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                            color: order.rating != null ? Colors.white38 : Colors.white70,
+                          ),
+                        ),
+                        if (order.rating != null)
+                          Row(
+                            children: List.generate(5, (starIndex) {
+                              return Icon(
+                                Icons.star_rounded,
+                                color: starIndex < order.rating! ? const Color(0xFFFFB020) : Colors.white10,
+                                size: 20,
+                              );
+                            }),
+                          )
+                        else
+                          Row(
+                            children: List.generate(5, (starIndex) {
+                              final currentStar = starIndex + 1;
+                              return GestureDetector(
+                                onTap: () async {
+                                  final err = await FirebaseService.updateOrderRating(order.id, currentStar);
+                                  if (!context.mounted) return;
+                                  if (err != null) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text("Hata: $err", style: GoogleFonts.outfit(color: Colors.white)),
+                                        backgroundColor: Colors.redAccent,
+                                      ),
+                                    );
+                                  } else {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text("Sipariş puanlandı! Teşekkür ederiz. ❤️", style: GoogleFonts.outfit(color: Colors.black, fontWeight: FontWeight.bold)),
+                                        backgroundColor: const Color(0xFF10B981),
+                                        behavior: SnackBarBehavior.floating,
+                                      ),
+                                    );
+                                  }
+                                },
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 2.0),
+                                  child: Icon(
+                                    Icons.star_outline_rounded,
+                                    color: const Color(0xFFFFB020).withValues(alpha: 0.5),
+                                    size: 26,
+                                  ),
+                                ),
+                              );
+                            }),
+                          ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             );
@@ -1193,104 +1795,328 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
   // Show Address Editor Sheet (for Add or Edit)
   void _showAddressEditorSheet(DeliveryAddress? existingAddress) {
     final titleController = TextEditingController(text: existingAddress?.title ?? "");
-    final addressController = TextEditingController(text: existingAddress?.fullAddress ?? "");
+    final addressDetailController = TextEditingController();
     final phoneController = TextEditingController(text: existingAddress?.phone ?? "");
     final formKey = GlobalKey<FormState>();
+
+    // Location Hierarchy State
+    String selectedCountry = "Türkiye";
+    List<Province> provincesList = [];
+    Province? selectedProvince;
+    District? selectedDistrict;
+    List<Neighborhood> neighborhoodsList = [];
+    Neighborhood? selectedNeighborhood;
+
+    bool isLoadingProvinces = true;
+    bool isLoadingNeighborhoods = false;
+    bool initialLoadDone = false;
+
+    // Parse out address details if editing
+    if (existingAddress != null) {
+      final parts = existingAddress.fullAddress.split(', ');
+      if (parts.length >= 2) {
+        addressDetailController.text = parts[1];
+      } else {
+        addressDetailController.text = existingAddress.fullAddress;
+      }
+    }
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) {
-        return Padding(
-          padding: MediaQuery.of(context).viewInsets,
-          child: Container(
-            height: 380,
-            decoration: BoxDecoration(
-              color: Theme.of(context).cardColor,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
-            ),
-            padding: const EdgeInsets.all(24),
-            child: Form(
-              key: formKey,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            // Asynchronous initializer for provinces & matched states
+            if (!initialLoadDone) {
+              initialLoadDone = true;
+              LocationApiService.getProvinces().then((loadedProvinces) async {
+                provincesList = loadedProvinces;
+                isLoadingProvinces = false;
+
+                // Auto-match values if editing an existing address
+                if (existingAddress != null) {
+                  final text = existingAddress.fullAddress.toLowerCase();
+
+                  // 1. Match Province (City)
+                  for (var p in provincesList) {
+                    if (text.contains(p.name.toLowerCase())) {
+                      selectedProvince = p;
+                      break;
+                    }
+                  }
+
+                  // 2. Match District
+                  if (selectedProvince != null) {
+                    for (var d in selectedProvince!.districts) {
+                      if (text.contains(d.name.toLowerCase())) {
+                        selectedDistrict = d;
+                        break;
+                      }
+                    }
+                  }
+
+                  // 3. Load & Match Neighborhood
+                  if (selectedDistrict != null) {
+                    isLoadingNeighborhoods = true;
+                    setModalState(() {});
+                    try {
+                      final nhList = await LocationApiService.getNeighborhoods(selectedDistrict!.id);
+                      neighborhoodsList = nhList;
+                      for (var nh in neighborhoodsList) {
+                        if (text.contains(nh.name.toLowerCase())) {
+                          selectedNeighborhood = nh;
+                          break;
+                        }
+                      }
+                    } catch (_) {}
+                    isLoadingNeighborhoods = false;
+                  }
+                }
+                setModalState(() {});
+              });
+            }
+
+            return Padding(
+              padding: MediaQuery.of(context).viewInsets,
+              child: Container(
+                height: MediaQuery.of(context).size.height * 0.78,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).cardColor,
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+                ),
+                padding: const EdgeInsets.all(24),
+                child: Form(
+                  key: formKey,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Icon(Icons.location_on_rounded, color: Theme.of(context).primaryColor, size: 24),
-                      const SizedBox(width: 8),
-                      Text(
-                        existingAddress == null ? "Yeni Adres Ekle" : "Adresi Düzenle",
-                        style: GoogleFonts.outfit(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                      Row(
+                        children: [
+                          Icon(Icons.add_location_alt_rounded, color: Theme.of(context).primaryColor, size: 24),
+                          const SizedBox(width: 8),
+                          Text(
+                            existingAddress == null ? "Yeni Adres Ekle" : "Adresi Düzenle",
+                            style: GoogleFonts.outfit(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                          ),
+                        ],
+                      ),
+                      const Divider(color: Colors.white12, height: 20),
+                      Expanded(
+                        child: ListView(
+                          children: [
+                            TextFormField(
+                              controller: titleController,
+                              style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
+                              decoration: const InputDecoration(
+                                labelText: "Adres Başlığı (Örn: Ev, İş)",
+                                prefixIcon: Icon(Icons.bookmark_outline_rounded, size: 20),
+                              ),
+                              validator: (v) => v == null || v.trim().isEmpty ? "Başlık gerekli" : null,
+                            ),
+                            const SizedBox(height: 12),
+
+                            // --- Country Field ---
+                            DropdownButtonFormField<String>(
+                              initialValue: selectedCountry,
+                              style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
+                              dropdownColor: Theme.of(context).cardColor,
+                              decoration: const InputDecoration(
+                                labelText: "Ülke",
+                                prefixIcon: Icon(Icons.public_rounded, size: 20),
+                              ),
+                              items: LocationApiService.getCountries().map((c) {
+                                return DropdownMenuItem<String>(
+                                  value: c,
+                                  child: Text(c, style: GoogleFonts.outfit(color: Colors.white, fontSize: 13)),
+                                );
+                              }).toList(),
+                              onChanged: (val) {
+                                if (val != null) {
+                                  setModalState(() {
+                                    selectedCountry = val;
+                                  });
+                                }
+                              },
+                            ),
+                            const SizedBox(height: 12),
+
+                            // --- Province (City) Field ---
+                            DropdownButtonFormField<Province>(
+                              initialValue: selectedProvince,
+                              style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
+                              dropdownColor: Theme.of(context).cardColor,
+                              decoration: InputDecoration(
+                                labelText: "Şehir / İl",
+                                prefixIcon: const Icon(Icons.location_city_rounded, size: 20),
+                                suffixIcon: isLoadingProvinces
+                                    ? const Padding(
+                                        padding: EdgeInsets.all(12.0),
+                                        child: SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(strokeWidth: 2),
+                                        ),
+                                      )
+                                    : null,
+                              ),
+                              items: provincesList.map((p) {
+                                return DropdownMenuItem<Province>(
+                                  value: p,
+                                  child: Text(p.name, style: GoogleFonts.outfit(color: Colors.white, fontSize: 13)),
+                                );
+                              }).toList(),
+                              validator: (v) => v == null ? "Şehir seçimi zorunludur" : null,
+                              onChanged: (val) {
+                                setModalState(() {
+                                  selectedProvince = val;
+                                  selectedDistrict = null;
+                                  selectedNeighborhood = null;
+                                  neighborhoodsList = [];
+                                });
+                              },
+                            ),
+                            const SizedBox(height: 12),
+
+                            // --- District Field ---
+                            DropdownButtonFormField<District>(
+                              initialValue: selectedDistrict,
+                              style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
+                              dropdownColor: Theme.of(context).cardColor,
+                              decoration: const InputDecoration(
+                                labelText: "İlçe",
+                                prefixIcon: Icon(Icons.explore_rounded, size: 20),
+                              ),
+                              items: (selectedProvince?.districts ?? []).map((d) {
+                                return DropdownMenuItem<District>(
+                                  value: d,
+                                  child: Text(d.name, style: GoogleFonts.outfit(color: Colors.white, fontSize: 13)),
+                                );
+                              }).toList(),
+                              validator: (v) => v == null ? "İlçe seçimi zorunludur" : null,
+                              onChanged: (val) async {
+                                if (val == null) return;
+                                setModalState(() {
+                                  selectedDistrict = val;
+                                  selectedNeighborhood = null;
+                                  neighborhoodsList = [];
+                                  isLoadingNeighborhoods = true;
+                                });
+
+                                try {
+                                  final nhList = await LocationApiService.getNeighborhoods(val.id);
+                                  setModalState(() {
+                                    neighborhoodsList = nhList;
+                                    isLoadingNeighborhoods = false;
+                                  });
+                                } catch (_) {
+                                  setModalState(() {
+                                    isLoadingNeighborhoods = false;
+                                  });
+                                }
+                              },
+                            ),
+                            const SizedBox(height: 12),
+
+                            // --- Neighborhood Field ---
+                            DropdownButtonFormField<Neighborhood>(
+                              initialValue: selectedNeighborhood,
+                              style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
+                              dropdownColor: Theme.of(context).cardColor,
+                              decoration: InputDecoration(
+                                labelText: "Mahalle / Semt",
+                                prefixIcon: const Icon(Icons.holiday_village_rounded, size: 20),
+                                suffixIcon: isLoadingNeighborhoods
+                                    ? const Padding(
+                                        padding: EdgeInsets.all(12.0),
+                                        child: SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(strokeWidth: 2),
+                                        ),
+                                      )
+                                    : null,
+                              ),
+                              items: neighborhoodsList.map((nh) {
+                                return DropdownMenuItem<Neighborhood>(
+                                  value: nh,
+                                  child: Text(nh.name, style: GoogleFonts.outfit(color: Colors.white, fontSize: 13)),
+                                );
+                              }).toList(),
+                              validator: (v) => v == null ? "Mahalle seçimi zorunludur" : null,
+                              onChanged: (val) {
+                                setModalState(() {
+                                  selectedNeighborhood = val;
+                                });
+                              },
+                            ),
+                            const SizedBox(height: 12),
+
+                            // --- Address Detail Field ---
+                            TextFormField(
+                              controller: addressDetailController,
+                              maxLines: 2,
+                              style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
+                              decoration: const InputDecoration(
+                                labelText: "Açık Adres (Sokak, No, Daire, vb.)",
+                                prefixIcon: Icon(Icons.home_rounded, size: 20),
+                              ),
+                              validator: (v) => v == null || v.trim().isEmpty ? "Açık adres detayı zorunludur" : null,
+                            ),
+                            const SizedBox(height: 12),
+
+                            // --- Phone Field ---
+                            TextFormField(
+                              controller: phoneController,
+                              keyboardType: TextInputType.phone,
+                              style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
+                              decoration: const InputDecoration(
+                                labelText: "İrtibat Telefonu",
+                                prefixIcon: Icon(Icons.phone_iphone_rounded, size: 20),
+                              ),
+                              validator: (v) => v == null || v.trim().isEmpty ? "Telefon gerekli" : null,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      ElevatedButton(
+                        onPressed: () async {
+                          if (!formKey.currentState!.validate()) return;
+                          final user = FirebaseService.currentUser;
+                          if (user == null) return;
+
+                          // Construct elegant hierarchical address string representation
+                          final String combinedAddress = "${selectedNeighborhood!.name} Mh., ${addressDetailController.text.trim()}, ${selectedDistrict!.name} / ${selectedProvince!.name}, $selectedCountry";
+
+                          final addr = DeliveryAddress(
+                            id: existingAddress?.id ?? 'addr_${DateTime.now().millisecondsSinceEpoch}',
+                            title: titleController.text.trim(),
+                            fullAddress: combinedAddress,
+                            phone: phoneController.text.trim(),
+                          );
+
+                          await FirebaseService.saveAddress(user.uid, addr);
+                          if (context.mounted) {
+                            Navigator.pop(context);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text("Adres başarıyla kaydedildi!", style: GoogleFonts.outfit(fontWeight: FontWeight.bold, color: Colors.black)),
+                                backgroundColor: Theme.of(context).primaryColor,
+                              ),
+                            );
+                          }
+                        },
+                        child: const Text("Adresi Kaydet"),
                       ),
                     ],
                   ),
-                  const Divider(color: Colors.white12, height: 20),
-                  Expanded(
-                    child: ListView(
-                      children: [
-                        TextFormField(
-                          controller: titleController,
-                          style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
-                          decoration: const InputDecoration(
-                            labelText: "Adres Başlığı (Örn: Ev, İş)",
-                          ),
-                          validator: (v) => v == null || v.trim().isEmpty ? "Başlık gerekli" : null,
-                        ),
-                        const SizedBox(height: 12),
-                        TextFormField(
-                          controller: addressController,
-                          style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
-                          decoration: const InputDecoration(
-                            labelText: "Açık Adres (Mahalle, Sokak, No, İlçe/İl)",
-                          ),
-                          validator: (v) => v == null || v.trim().isEmpty ? "Adres gerekli" : null,
-                        ),
-                        const SizedBox(height: 12),
-                        TextFormField(
-                          controller: phoneController,
-                          keyboardType: TextInputType.phone,
-                          style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
-                          decoration: const InputDecoration(
-                            labelText: "İrtibat Telefonu",
-                          ),
-                          validator: (v) => v == null || v.trim().isEmpty ? "Telefon gerekli" : null,
-                        ),
-                      ],
-                    ),
-                  ),
-                  ElevatedButton(
-                    onPressed: () async {
-                      if (!formKey.currentState!.validate()) return;
-                      final user = FirebaseService.currentUser;
-                      if (user == null) return;
-
-                      final addr = DeliveryAddress(
-                        id: existingAddress?.id ?? 'addr_${DateTime.now().millisecondsSinceEpoch}',
-                        title: titleController.text.trim(),
-                        fullAddress: addressController.text.trim(),
-                        phone: phoneController.text.trim(),
-                      );
-
-                      await FirebaseService.saveAddress(user.uid, addr);
-                      if (context.mounted) {
-                        Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text("Adres başarıyla kaydedildi!", style: GoogleFonts.outfit(fontWeight: FontWeight.bold, color: Colors.black)),
-                            backgroundColor: Theme.of(context).primaryColor,
-                          ),
-                        );
-                      }
-                    },
-                    child: const Text("Adresi Kaydet"),
-                  ),
-                ],
+                ),
               ),
-            ),
-          ),
+            );
+          },
         );
       },
     );
@@ -1467,7 +2293,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  "İletişim & Varsayılan Teslimat",
+                  "İletişim Bilgileri",
                   style: GoogleFonts.outfit(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white),
                 ),
                 const Divider(color: Colors.white10, height: 20),
@@ -1478,16 +2304,6 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                   decoration: const InputDecoration(
                     labelText: "Telefon Numarası",
                     prefixIcon: Icon(Icons.phone_iphone_rounded, size: 16),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _addressController,
-                  maxLines: 2,
-                  style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
-                  decoration: const InputDecoration(
-                    labelText: "Genel Teslimat Adresi",
-                    prefixIcon: Icon(Icons.home_work_outlined, size: 16),
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -1501,7 +2317,6 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                     final err = await FirebaseService.updateUserProfile(
                       uid: user.uid,
                       phone: _phoneController!.text.trim(),
-                      address: _addressController!.text.trim(),
                     );
                     if (mounted) Navigator.pop(context); // close loader
                     if (mounted) {
@@ -1510,7 +2325,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                       } else {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                            content: Text("Profil bilgileri başarıyla güncellendi!", style: GoogleFonts.outfit(fontWeight: FontWeight.bold, color: Colors.black)),
+                            content: Text("Telefon numarası başarıyla güncellendi!", style: GoogleFonts.outfit(fontWeight: FontWeight.bold, color: Colors.black)),
                             backgroundColor: theme.primaryColor,
                           ),
                         );
@@ -1578,61 +2393,309 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                       itemCount: list.length,
                       itemBuilder: (context, idx) {
                         final addr = list[idx];
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 8),
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.02),
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(color: Colors.white.withValues(alpha: 0.03)),
-                          ),
-                          child: Row(
-                            children: [
-                              const Icon(Icons.location_on_outlined, color: Colors.white30, size: 20),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Text(
-                                          addr.title,
-                                          style: GoogleFonts.outfit(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white),
-                                        ),
-                                        const Spacer(),
-                                        GestureDetector(
-                                          onTap: () => _showAddressEditorSheet(addr),
-                                          child: Icon(Icons.edit_outlined, color: theme.primaryColor, size: 15),
-                                        ),
-                                        const SizedBox(width: 12),
-                                        GestureDetector(
-                                          onTap: () async {
-                                            await FirebaseService.deleteAddress(user.uid, addr.id);
-                                            if (context.mounted) {
-                                              ScaffoldMessenger.of(context).showSnackBar(
-                                                const SnackBar(content: Text("Adres silindi.")),
-                                              );
-                                            }
-                                          },
-                                          child: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 15),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      addr.fullAddress,
-                                      style: GoogleFonts.outfit(fontSize: 11, color: Colors.white54),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      addr.phone,
-                                      style: GoogleFonts.outfit(fontSize: 10, color: Colors.white30),
-                                    ),
-                                  ],
-                                ),
+                        final isSelected = addr.id == user.selectedAddressId || (user.selectedAddressId.isEmpty && user.address == addr.fullAddress);
+                        
+                        return GestureDetector(
+                          onTap: () async {
+                            await FirebaseService.selectAddress(user.uid, addr.id, addr.fullAddress, addr.phone);
+                            setState(() {});
+                          },
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 250),
+                            margin: const EdgeInsets.only(bottom: 10),
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: isSelected 
+                                  ? theme.primaryColor.withValues(alpha: 0.05) 
+                                  : Colors.white.withValues(alpha: 0.01),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: isSelected 
+                                    ? theme.primaryColor.withValues(alpha: 0.4) 
+                                    : Colors.white.withValues(alpha: 0.04),
+                                width: isSelected ? 1.5 : 1.0,
                               ),
-                            ],
+                              boxShadow: isSelected ? [
+                                BoxShadow(
+                                  color: theme.primaryColor.withValues(alpha: 0.1),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 2),
+                                )
+                              ] : [],
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  isSelected ? Icons.radio_button_checked_rounded : Icons.radio_button_off_rounded, 
+                                  color: isSelected ? theme.primaryColor : Colors.white30, 
+                                  size: 18,
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Text(
+                                            addr.title,
+                                            style: GoogleFonts.outfit(
+                                              fontSize: 13, 
+                                              fontWeight: FontWeight.bold, 
+                                              color: isSelected ? theme.primaryColor : Colors.white,
+                                            ),
+                                          ),
+                                          if (isSelected) ...[
+                                            const SizedBox(width: 6),
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                              decoration: BoxDecoration(
+                                                color: theme.primaryColor.withValues(alpha: 0.15),
+                                                borderRadius: BorderRadius.circular(6),
+                                              ),
+                                              child: Text(
+                                                "Seçili",
+                                                style: GoogleFonts.outfit(fontSize: 8, fontWeight: FontWeight.bold, color: theme.primaryColor),
+                                              ),
+                                            ),
+                                          ],
+                                          const Spacer(),
+                                          GestureDetector(
+                                            onTap: () => _showAddressEditorSheet(addr),
+                                            child: Icon(Icons.edit_outlined, color: theme.primaryColor, size: 15),
+                                          ),
+                                          const SizedBox(width: 12),
+                                          GestureDetector(
+                                            onTap: () async {
+                                              await FirebaseService.deleteAddress(user.uid, addr.id);
+                                              if (context.mounted) {
+                                                ScaffoldMessenger.of(context).showSnackBar(
+                                                  const SnackBar(content: Text("Adres silindi.")),
+                                                );
+                                              }
+                                            },
+                                            child: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 15),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        addr.fullAddress,
+                                        style: GoogleFonts.outfit(fontSize: 11, color: Colors.white54),
+                                      ),
+                                      const SizedBox(height: 3),
+                                      Text(
+                                        addr.phone,
+                                        style: GoogleFonts.outfit(fontSize: 10, color: Colors.white30),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+
+          // Past Support Tickets & Live Chats
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: theme.cardColor,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.history_edu_rounded, color: Colors.amber, size: 20),
+                    const SizedBox(width: 8),
+                    Text(
+                      "Aldığım Destekler & Sohbetler",
+                      style: GoogleFonts.outfit(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white),
+                    ),
+                  ],
+                ),
+                const Divider(color: Colors.white10, height: 20),
+                StreamBuilder<List<ChatSession>>(
+                  stream: FirebaseService.streamCustomerChatSessions(user.uid),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CupertinoActivityIndicator(radius: 10, color: Colors.white30));
+                    }
+                    final list = snapshot.data ?? [];
+                    if (list.isEmpty) {
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 12.0),
+                        child: Text(
+                          "Henüz geçmiş bir canlı destek talebiniz bulunmuyor.",
+                          style: GoogleFonts.outfit(fontSize: 11, color: Colors.white30, fontStyle: FontStyle.italic),
+                        ),
+                      );
+                    }
+                    return ListView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: list.length > 5 ? 5 : list.length, // Let's show up to 5 most recent tickets
+                      itemBuilder: (context, idx) {
+                        final session = list[idx];
+                        final isClosed = session.status == 'closed';
+                        final String lastMsg = session.messages.isNotEmpty 
+                            ? (session.messages.last.imageUrl.isNotEmpty 
+                                ? "🖼️ Fotoğraf gönderildi" 
+                                : session.messages.last.text)
+                            : "Mesaj yok";
+
+                        return InkWell(
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (_) => LiveSupportScreen(session: session)),
+                            );
+                          },
+                          borderRadius: BorderRadius.circular(14),
+                          child: Container(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.01),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(color: Colors.white.withValues(alpha: 0.03)),
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: isClosed 
+                                        ? Colors.white.withValues(alpha: 0.04) 
+                                        : Colors.amber.withValues(alpha: 0.1),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Icon(
+                                    isClosed ? Icons.chat_bubble_outline_rounded : Icons.chat_bubble_rounded, 
+                                    color: isClosed ? Colors.white38 : Colors.amber, 
+                                    size: 16,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              session.orderId != null && session.orderId!.isNotEmpty
+                                                  ? "Sipariş Destek #${session.orderId!.length > 8 ? session.orderId!.substring(session.orderId!.length - 6).toUpperCase() : session.orderId}"
+                                                  : "Genel Canlı Destek",
+                                              style: GoogleFonts.outfit(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                            decoration: BoxDecoration(
+                                              color: isClosed 
+                                                  ? Colors.white.withValues(alpha: 0.1) 
+                                                  : Colors.blueAccent.withValues(alpha: 0.15),
+                                              borderRadius: BorderRadius.circular(6),
+                                            ),
+                                            child: Text(
+                                              isClosed ? "Sonlandı" : "Aktif",
+                                              style: GoogleFonts.outfit(
+                                                fontSize: 8, 
+                                                fontWeight: FontWeight.bold, 
+                                                color: isClosed ? Colors.white38 : Colors.blueAccent,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        lastMsg,
+                                        style: GoogleFonts.outfit(fontSize: 11, color: Colors.white54),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Row(
+                                        children: [
+                                          Text(
+                                            "${session.updatedAt.day}/${session.updatedAt.month}/${session.updatedAt.year} ${session.updatedAt.hour}:${session.updatedAt.minute.toString().padLeft(2, '0')}",
+                                            style: GoogleFonts.outfit(fontSize: 9, color: Colors.white24),
+                                          ),
+                                          const Spacer(),
+                                          if (session.rating != null && session.rating! > 0) ...[
+                                            const Icon(Icons.star_rounded, color: Colors.amber, size: 12),
+                                            const SizedBox(width: 2),
+                                            Text(
+                                              "${session.rating}/5 Puan",
+                                              style: GoogleFonts.outfit(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.amber),
+                                            ),
+                                          ] else if (isClosed) ...[
+                                            Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Text(
+                                                  "Puan Ver: ",
+                                                  style: GoogleFonts.outfit(fontSize: 10, color: Colors.white38),
+                                                ),
+                                                ...List.generate(5, (starIdx) {
+                                                  final score = starIdx + 1;
+                                                  return InkWell(
+                                                    onTap: () async {
+                                                      final err = await FirebaseService.rateSupportSession(session.id, score);
+                                                      if (err != null && context.mounted) {
+                                                        ScaffoldMessenger.of(context).showSnackBar(
+                                                          SnackBar(
+                                                            content: Text("Puan iletilemedi: $err"),
+                                                            backgroundColor: Colors.red,
+                                                          ),
+                                                        );
+                                                      } else if (context.mounted) {
+                                                        ScaffoldMessenger.of(context).showSnackBar(
+                                                          SnackBar(
+                                                            content: Text("Desteğe $score/5 puan verdiniz. Teşekkürler!"),
+                                                            backgroundColor: Colors.green,
+                                                          ),
+                                                        );
+                                                      }
+                                                    },
+                                                    borderRadius: BorderRadius.circular(4),
+                                                    child: Padding(
+                                                      padding: const EdgeInsets.symmetric(horizontal: 1.5),
+                                                      child: Icon(
+                                                        Icons.star_border_rounded,
+                                                        color: Colors.amber,
+                                                        size: 14,
+                                                      ),
+                                                    ),
+                                                  );
+                                                }),
+                                              ],
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         );
                       },
@@ -1717,6 +2780,120 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
       trailing: const Icon(Icons.chevron_right_rounded, color: Colors.white30, size: 20),
       onTap: onTap,
       contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+    );
+  }
+}
+
+class _AnimatedNotificationToast extends StatefulWidget {
+  final String title;
+  final String desc;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onDismiss;
+
+  const _AnimatedNotificationToast({
+    required this.title,
+    required this.desc,
+    required this.icon,
+    required this.color,
+    required this.onDismiss,
+  });
+
+  @override
+  State<_AnimatedNotificationToast> createState() => _AnimatedNotificationToastState();
+}
+
+class _AnimatedNotificationToastState extends State<_AnimatedNotificationToast> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<Offset> _offsetAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 400),
+    );
+    _offsetAnimation = Tween<Offset>(
+      begin: const Offset(0, -1.5),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutBack));
+
+    _controller.forward();
+
+    // Auto-dismiss after 4 seconds
+    Future.delayed(const Duration(seconds: 4), () {
+      if (mounted) {
+        _controller.reverse().then((_) {
+          widget.onDismiss();
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SlideTransition(
+      position: _offsetAnimation,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1C1C1E),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: widget.color.withValues(alpha: 0.3)),
+          boxShadow: [
+            BoxShadow(
+              color: widget.color.withValues(alpha: 0.15),
+              blurRadius: 20,
+              offset: const Offset(0, 10),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: widget.color.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(widget.icon, color: widget.color, size: 24),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.title,
+                    style: GoogleFonts.outfit(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    widget.desc,
+                    style: GoogleFonts.outfit(fontSize: 12, color: Colors.white70),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.close, color: Colors.white30, size: 18),
+              onPressed: () {
+                _controller.reverse().then((_) {
+                  widget.onDismiss();
+                });
+              },
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

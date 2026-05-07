@@ -9,10 +9,14 @@ class UserModel {
   // Customer delivery info
   final String phone;
   final String address;
+  final String selectedAddressId;
 
   // Restaurant location info
   final String restaurantName;
   final String restaurantAddress;
+  final double minOrderAmount;
+  final String restaurantLogo;
+  final String restaurantDescription;
 
   UserModel({
     required this.uid,
@@ -23,28 +27,43 @@ class UserModel {
     required this.createdAt,
     this.phone = '',
     this.address = '',
+    this.selectedAddressId = '',
     this.restaurantName = '',
     this.restaurantAddress = '',
+    this.minOrderAmount = 0.0,
+    this.restaurantLogo = '',
+    this.restaurantDescription = '',
   });
 
   UserModel copyWith({
+    String? fullName,
+    String? email,
     String? phone,
     String? address,
+    String? selectedAddressId,
     String? restaurantName,
     String? restaurantAddress,
+    double? minOrderAmount,
+    String? restaurantLogo,
+    String? restaurantDescription,
     String? role,
+    String? status,
   }) {
     return UserModel(
       uid: uid,
-      fullName: fullName,
-      email: email,
+      fullName: fullName ?? this.fullName,
+      email: email ?? this.email,
       role: role ?? this.role,
-      status: status,
+      status: status ?? this.status,
       createdAt: createdAt,
       phone: phone ?? this.phone,
       address: address ?? this.address,
+      selectedAddressId: selectedAddressId ?? this.selectedAddressId,
       restaurantName: restaurantName ?? this.restaurantName,
       restaurantAddress: restaurantAddress ?? this.restaurantAddress,
+      minOrderAmount: minOrderAmount ?? this.minOrderAmount,
+      restaurantLogo: restaurantLogo ?? this.restaurantLogo,
+      restaurantDescription: restaurantDescription ?? this.restaurantDescription,
     );
   }
 
@@ -58,8 +77,12 @@ class UserModel {
       'createdAt': createdAt.toIso8601String(),
       'phone': phone,
       'address': address,
+      'selectedAddressId': selectedAddressId,
       'restaurantName': restaurantName,
       'restaurantAddress': restaurantAddress,
+      'minOrderAmount': minOrderAmount,
+      'restaurantLogo': restaurantLogo,
+      'restaurantDescription': restaurantDescription,
     };
   }
 
@@ -73,8 +96,12 @@ class UserModel {
       createdAt: DateTime.parse(map['createdAt'] ?? DateTime.now().toIso8601String()),
       phone: map['phone'] ?? '',
       address: map['address'] ?? '',
+      selectedAddressId: map['selectedAddressId'] ?? '',
       restaurantName: map['restaurantName'] ?? '',
       restaurantAddress: map['restaurantAddress'] ?? '',
+      minOrderAmount: (map['minOrderAmount'] as num?)?.toDouble() ?? 0.0,
+      restaurantLogo: map['restaurantLogo'] ?? '',
+      restaurantDescription: map['restaurantDescription'] ?? '',
     );
   }
 }
@@ -87,6 +114,7 @@ class FoodItem {
   final String imageUrl;
   final String category;
   final double rating;
+  final int stock;
   final String restaurantOwnerId; // which restaurant owns this item
 
   FoodItem({
@@ -97,6 +125,7 @@ class FoodItem {
     required this.imageUrl,
     required this.category,
     required this.rating,
+    this.stock = 99,
     this.restaurantOwnerId = '',
   });
 
@@ -109,6 +138,7 @@ class FoodItem {
       'imageUrl': imageUrl,
       'category': category,
       'rating': rating,
+      'stock': stock,
       'restaurantOwnerId': restaurantOwnerId,
     };
   }
@@ -122,6 +152,7 @@ class FoodItem {
       imageUrl: map['imageUrl'] ?? '',
       category: map['category'] ?? '',
       rating: (map['rating'] as num?)?.toDouble() ?? 4.5,
+      stock: map['stock'] ?? 99,
       restaurantOwnerId: map['restaurantOwnerId'] ?? '',
     );
   }
@@ -154,8 +185,11 @@ class OrderModel {
   final String customerName;
   final List<OrderItem> items;
   final double totalAmount;
-  String status; // 'pending', 'preparing', 'on_the_way', 'delivered'
+  String status; // 'pending', 'preparing', 'on_the_way', 'delivered', 'ready_for_pickup'
   final DateTime createdAt;
+  final bool isTakeaway;
+  int? rating; // 1 to 5 stars rating given by customer after delivery
+  final String? note; // Optional order note for delivery instructions
 
   OrderModel({
     required this.id,
@@ -165,6 +199,9 @@ class OrderModel {
     required this.totalAmount,
     required this.status,
     required this.createdAt,
+    this.isTakeaway = false,
+    this.rating,
+    this.note,
   });
 
   Map<String, dynamic> toMap() {
@@ -176,6 +213,9 @@ class OrderModel {
       'totalAmount': totalAmount,
       'status': status,
       'createdAt': createdAt.toIso8601String(),
+      'isTakeaway': isTakeaway,
+      'rating': rating,
+      'note': note,
     };
   }
 
@@ -190,6 +230,9 @@ class OrderModel {
       totalAmount: (map['totalAmount'] as num?)?.toDouble() ?? 0.0,
       status: map['status'] ?? 'pending',
       createdAt: DateTime.parse(map['createdAt'] ?? DateTime.now().toIso8601String()),
+      isTakeaway: map['isTakeaway'] ?? false,
+      rating: map['rating'] as int?,
+      note: map['note'] as String?,
     );
   }
 }
@@ -350,6 +393,7 @@ class ChatMessage {
   final String senderName;
   final bool isFromCustomer;
   final String text;
+  final String imageUrl;
   final DateTime timestamp;
 
   ChatMessage({
@@ -358,6 +402,7 @@ class ChatMessage {
     required this.senderName,
     required this.isFromCustomer,
     required this.text,
+    this.imageUrl = '',
     required this.timestamp,
   });
 
@@ -367,6 +412,7 @@ class ChatMessage {
     'senderName': senderName,
     'isFromCustomer': isFromCustomer,
     'text': text,
+    'imageUrl': imageUrl,
     'timestamp': timestamp.toIso8601String(),
   };
 
@@ -376,6 +422,7 @@ class ChatMessage {
     senderName: map['senderName'] ?? '',
     isFromCustomer: map['isFromCustomer'] ?? true,
     text: map['text'] ?? '',
+    imageUrl: map['imageUrl'] ?? '',
     timestamp: DateTime.parse(map['timestamp'] ?? DateTime.now().toIso8601String()),
   );
 }
@@ -391,6 +438,8 @@ class ChatSession {
   DateTime updatedAt;
   String lastMessage;
   List<ChatMessage> messages;
+  String? orderId;            // The order associated with this support request
+  int? rating;                // Rating (1-5 stars) given to this support session by the customer
 
   ChatSession({
     required this.id,
@@ -403,6 +452,8 @@ class ChatSession {
     required this.updatedAt,
     this.lastMessage = '',
     this.messages = const [],
+    this.orderId,
+    this.rating,
   });
 
   bool get isWaiting => status == 'waiting';
@@ -420,6 +471,8 @@ class ChatSession {
     'updatedAt': updatedAt.toIso8601String(),
     'lastMessage': lastMessage,
     'messages': messages.map((m) => m.toMap()).toList(),
+    'orderId': orderId,
+    'rating': rating,
   };
 
   factory ChatSession.fromMap(Map<String, dynamic> map) => ChatSession(
@@ -437,6 +490,8 @@ class ChatSession {
             (map['messages'] as List).map((m) => ChatMessage.fromMap(Map<String, dynamic>.from(m))),
           )
         : [],
+    orderId: map['orderId'],
+    rating: map['rating'] as int?,
   );
 }
 

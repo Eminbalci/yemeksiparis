@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/models.dart';
 import '../firebase_options.dart';
 
@@ -12,6 +13,38 @@ class FirebaseService {
 
   // Active Session
   static UserModel? currentUser;
+  static List<UserModel> _firestoreUsers = [];
+
+  static Future<void> saveSession(String uid, String role) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('session_uid', uid);
+      await prefs.setString('session_role', role);
+    } catch (_) {}
+  }
+
+  static Future<void> clearSession() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('session_uid');
+      await prefs.remove('session_role');
+    } catch (_) {}
+  }
+
+  static Future<UserModel?> tryAutoLogin() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final uid = prefs.getString('session_uid');
+      if (uid != null && uid.isNotEmpty) {
+        final user = await getUserById(uid);
+        if (user != null) {
+          currentUser = user;
+          return user;
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
 
   // Mock Databases (In-Memory for Demo Mode)
   static final List<UserModel> _mockUsers = [
@@ -34,6 +67,15 @@ class FirebaseService {
       createdAt: DateTime.now(),
       restaurantName: 'Mahmut Usta Kebap Evi',
       restaurantAddress: 'Kadıköy, İstanbul',
+    ),
+    UserModel(
+      uid: 'demo_support_1',
+      fullName: 'Ahmet Destek Yetkilisi',
+      email: 'destek@yemek.com',
+      role: 'support',
+      status: 'active',
+      createdAt: DateTime.now(),
+      phone: '0533 999 88 77',
     ),
   ];
 
@@ -161,6 +203,7 @@ class FirebaseService {
       totalAmount: 550.0,
       status: 'pending',
       createdAt: DateTime.now().subtract(const Duration(minutes: 12)),
+      note: 'Lütfen kebapların sosu bol olsun, ayranlar soğuk gelsin.',
     ),
   ];
 
@@ -182,6 +225,15 @@ class FirebaseService {
       isFirebaseInitialized = true;
       useDemoMode = false;
       debugPrint("Firebase successfully initialized! App will run on Cloud Firestore.");
+      
+      // Real-time Firestore users collection synchronizer
+      FirebaseFirestore.instance.collection('users').snapshots().listen((snapshot) {
+        _firestoreUsers = snapshot.docs.map((doc) {
+          Map<String, dynamic> data = doc.data();
+          data['uid'] = doc.id;
+          return UserModel.fromMap(data);
+        }).toList();
+      });
     } catch (e) {
       isFirebaseInitialized = false;
       useDemoMode = true;
@@ -198,7 +250,6 @@ class FirebaseService {
   static Future<String?> signIn({
     required String email,
     required String password,
-    required String role, // customer or restaurant_owner
   }) async {
     if (!useDemoMode) {
       try {
@@ -212,14 +263,8 @@ class FirebaseService {
 
         if (userDoc.exists) {
           Map<String, dynamic> data = userDoc.data() as Map<String, dynamic>;
-          String dbRole = data['role'] ?? 'customer';
-          
-          if (dbRole != role && dbRole != 'admin') {
-            await FirebaseAuth.instance.signOut();
-            return "Seçilen giriş türü bu hesapla eşleşmiyor. Lütfen doğru rolü seçin.";
-          }
-
           currentUser = UserModel.fromMap(data);
+          await saveSession(currentUser!.uid, currentUser!.role);
           return null; // Success
         } else {
           await FirebaseAuth.instance.signOut();
@@ -238,28 +283,31 @@ class FirebaseService {
 
       // Check if user exists in mock database
       final match = _mockUsers.firstWhere(
-        (u) => u.email.toLowerCase() == email.toLowerCase() && (u.role == role || u.role == 'admin'),
+        (u) => u.email.toLowerCase() == email.toLowerCase(),
         orElse: () => UserModel(uid: '', fullName: '', email: '', role: '', createdAt: DateTime.now()),
       );
 
       if (match.uid.isEmpty) {
-        // Allow creating demo account on the fly if it's the correct credentials but password is correct
-        if (email.contains('@') && password.length >= 6) {
-          // If they try logging in with demo credentials, check passwords
-          if (email == 'musteri@yemek.com' && role == 'customer') {
-            currentUser = _mockUsers.firstWhere((u) => u.uid == 'demo_customer_1');
-            return null;
-          }
-          if (email == 'restoran@yemek.com' && role == 'restaurant_owner') {
-            currentUser = _mockUsers.firstWhere((u) => u.uid == 'demo_restaurant_1');
-            return null;
-          }
-          return "Bu e-posta ile kayıtlı bir $role bulunamadı. Lütfen 'Hemen Kayıt Ol' kısmından yeni hesap oluşturun.";
+        if (email.toLowerCase() == 'musteri@yemek.com') {
+          currentUser = _mockUsers.firstWhere((u) => u.uid == 'demo_customer_1');
+          await saveSession(currentUser!.uid, currentUser!.role);
+          return null;
         }
-        return "Geçersiz e-posta adresi veya şifre (Min. 6 karakter).";
+        if (email.toLowerCase() == 'restoran@yemek.com') {
+          currentUser = _mockUsers.firstWhere((u) => u.uid == 'demo_restaurant_1');
+          await saveSession(currentUser!.uid, currentUser!.role);
+          return null;
+        }
+        if (email.toLowerCase() == 'destek@yemek.com') {
+          currentUser = _mockUsers.firstWhere((u) => u.uid == 'demo_support_1');
+          await saveSession(currentUser!.uid, currentUser!.role);
+          return null;
+        }
+        return "Geçersiz e-posta adresi veya şifre.";
       }
 
       currentUser = match;
+      await saveSession(currentUser!.uid, currentUser!.role);
       return null; // Success
     }
   }
@@ -286,13 +334,14 @@ class FirebaseService {
         final bool isFirstUser = usersSnapshot.docs.isEmpty;
         
         final finalRole = isFirstUser ? 'admin' : role;
+        final finalStatus = finalRole == 'restaurant_owner' ? 'pending_approval' : 'active';
 
         UserModel newUser = UserModel(
           uid: credential.user!.uid,
           fullName: fullName,
           email: email,
           role: finalRole,
-          status: 'active',
+          status: finalStatus,
           createdAt: DateTime.now(),
           phone: phone,
           address: address,
@@ -304,6 +353,7 @@ class FirebaseService {
         await FirebaseFirestore.instance.collection('users').doc(newUser.uid).set(newUser.toMap());
         
         currentUser = newUser;
+        await saveSession(currentUser!.uid, currentUser!.role);
         return null; // Success
       } on FirebaseAuthException catch (e) {
         if (e.code == 'email-already-in-use') return "Bu e-posta adresi zaten kullanımda.";
@@ -324,13 +374,14 @@ class FirebaseService {
       // Check if there are no manually registered demo users yet
       final bool isFirstManualRegister = !_mockUsers.any((u) => u.uid != 'demo_customer_1' && u.uid != 'demo_restaurant_1');
       final finalRole = isFirstManualRegister ? 'admin' : role;
+      final finalStatus = finalRole == 'restaurant_owner' ? 'pending_approval' : 'active';
 
       UserModel newUser = UserModel(
         uid: 'demo_user_${DateTime.now().millisecondsSinceEpoch}',
         fullName: fullName,
         email: email,
         role: finalRole,
-        status: 'active',
+        status: finalStatus,
         createdAt: DateTime.now(),
         phone: phone,
         address: address,
@@ -341,6 +392,7 @@ class FirebaseService {
       _mockUsers.add(newUser);
       _usersStreamController.add(List.from(_mockUsers));
       currentUser = newUser;
+      await saveSession(currentUser!.uid, currentUser!.role);
       return null; // Success
     }
   }
@@ -365,6 +417,7 @@ class FirebaseService {
     if (!useDemoMode) {
       await FirebaseAuth.instance.signOut();
     }
+    await clearSession();
     currentUser = null;
   }
 
@@ -416,6 +469,8 @@ class FirebaseService {
         imageUrl: meal.imageUrl.isNotEmpty ? meal.imageUrl : 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500&auto=format&fit=crop&q=60&ixlib=rb-4.0.3',
         category: meal.category,
         rating: meal.rating,
+        stock: meal.stock,
+        restaurantOwnerId: meal.restaurantOwnerId.isNotEmpty ? meal.restaurantOwnerId : (currentUser?.uid ?? ''),
       );
       _mockFoodItems.insert(0, newItem);
       _foodStreamController.add(List.from(_mockFoodItems));
@@ -460,7 +515,7 @@ class FirebaseService {
   }
 
   // Submit Order (Customer)
-  static Future<String?> placeOrder(List<OrderItem> items, double total) async {
+  static Future<String?> placeOrder(List<OrderItem> items, double total, {bool isTakeaway = false, String? note}) async {
     if (currentUser == null) return "Giriş yapmış bir kullanıcı bulunamadı.";
 
     if (!useDemoMode) {
@@ -473,6 +528,8 @@ class FirebaseService {
           totalAmount: total,
           status: 'pending',
           createdAt: DateTime.now(),
+          isTakeaway: isTakeaway,
+          note: note,
         );
 
         await FirebaseFirestore.instance.collection('orders').add(newOrder.toMap());
@@ -490,6 +547,8 @@ class FirebaseService {
         totalAmount: total,
         status: 'pending',
         createdAt: DateTime.now(),
+        isTakeaway: isTakeaway,
+        note: note,
       );
 
       _mockOrders.insert(0, newOrder);
@@ -518,6 +577,52 @@ class FirebaseService {
         return null;
       }
       return "Sipariş bulunamadı.";
+    }
+  }
+
+  // Update Order Rating given by Customer
+  static Future<String?> updateOrderRating(String orderId, int rating) async {
+    if (!useDemoMode) {
+      try {
+        await FirebaseFirestore.instance.collection('orders').doc(orderId).update({
+          'rating': rating,
+        });
+        return null;
+      } catch (e) {
+        return e.toString();
+      }
+    } else {
+      await Future.delayed(const Duration(milliseconds: 200));
+      int index = _mockOrders.indexWhere((o) => o.id == orderId);
+      if (index != -1) {
+        _mockOrders[index].rating = rating;
+        _orderStreamController.add(List.from(_mockOrders));
+        return null;
+      }
+      return "Sipariş bulunamadı.";
+    }
+  }
+
+  // Get a single User by ID (Production and Demo compliant)
+  static Future<UserModel?> getUserById(String uid) async {
+    if (!useDemoMode) {
+      try {
+        final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+        if (doc.exists && doc.data() != null) {
+          final data = doc.data()!;
+          data['uid'] = doc.id;
+          return UserModel.fromMap(data);
+        }
+        return null;
+      } catch (_) {
+        return null;
+      }
+    } else {
+      final idx = _mockUsers.indexWhere((u) => u.uid == uid);
+      if (idx != -1) {
+        return _mockUsers[idx];
+      }
+      return null;
     }
   }
 
@@ -580,25 +685,50 @@ class FirebaseService {
   // ─────────────────────────────────────────
   static Future<String?> updateUserProfile({
     required String uid,
+    String? fullName,
+    String? email,
     String? phone,
     String? address,
+    String? selectedAddressId,
     String? restaurantName,
     String? restaurantAddress,
+    double? minOrderAmount,
+    String? restaurantLogo,
+    String? restaurantDescription,
+    String? role,
+    String? status,
   }) async {
     if (!useDemoMode) {
       try {
         final data = <String, dynamic>{};
+        if (fullName != null) data['fullName'] = fullName;
+        if (email != null) data['email'] = email;
         if (phone != null) data['phone'] = phone;
         if (address != null) data['address'] = address;
+        if (selectedAddressId != null) data['selectedAddressId'] = selectedAddressId;
         if (restaurantName != null) data['restaurantName'] = restaurantName;
         if (restaurantAddress != null) data['restaurantAddress'] = restaurantAddress;
+        if (minOrderAmount != null) data['minOrderAmount'] = minOrderAmount;
+        if (restaurantLogo != null) data['restaurantLogo'] = restaurantLogo;
+        if (restaurantDescription != null) data['restaurantDescription'] = restaurantDescription;
+        if (role != null) data['role'] = role;
+        if (status != null) data['status'] = status;
+        
         await FirebaseFirestore.instance.collection('users').doc(uid).update(data);
         if (currentUser?.uid == uid) {
           currentUser = currentUser!.copyWith(
+            fullName: fullName,
+            email: email,
             phone: phone,
             address: address,
+            selectedAddressId: selectedAddressId,
             restaurantName: restaurantName,
             restaurantAddress: restaurantAddress,
+            minOrderAmount: minOrderAmount,
+            restaurantLogo: restaurantLogo,
+            restaurantDescription: restaurantDescription,
+            role: role,
+            status: status,
           );
         }
         return null;
@@ -610,16 +740,59 @@ class FirebaseService {
       final idx = _mockUsers.indexWhere((u) => u.uid == uid);
       if (idx != -1) {
         _mockUsers[idx] = _mockUsers[idx].copyWith(
+          fullName: fullName,
+          email: email,
           phone: phone,
           address: address,
+          selectedAddressId: selectedAddressId,
           restaurantName: restaurantName,
           restaurantAddress: restaurantAddress,
+          minOrderAmount: minOrderAmount,
+          restaurantLogo: restaurantLogo,
+          restaurantDescription: restaurantDescription,
+          role: role,
+          status: status,
         );
         if (currentUser?.uid == uid) currentUser = _mockUsers[idx];
         _usersStreamController.add(List.from(_mockUsers));
       }
       return null;
     }
+  }
+
+  // Deletes a restaurant user and cascaded food items
+  static Future<String?> deleteRestaurant(String uid) async {
+    if (!useDemoMode) {
+      try {
+        await FirebaseFirestore.instance.collection('users').doc(uid).delete();
+        final mealsSnapshot = await FirebaseFirestore.instance
+            .collection('meals')
+            .where('restaurantOwnerId', isEqualTo: uid)
+            .get();
+        for (var doc in mealsSnapshot.docs) {
+          await doc.reference.delete();
+        }
+        return null;
+      } catch (e) {
+        return e.toString();
+      }
+    } else {
+      await Future.delayed(const Duration(milliseconds: 300));
+      _mockUsers.removeWhere((u) => u.uid == uid);
+      _mockFoodItems.removeWhere((f) => f.restaurantOwnerId == uid);
+      _usersStreamController.add(List.from(_mockUsers));
+      _foodStreamController.add(List.from(_mockFoodItems));
+      return null;
+    }
+  }
+
+  static Future<String?> selectAddress(String uid, String addressId, String addressText, String addressPhone) async {
+    return updateUserProfile(
+      uid: uid,
+      address: addressText,
+      phone: addressPhone,
+      selectedAddressId: addressId,
+    );
   }
 
   // ─────────────────────────────────────────
@@ -841,11 +1014,25 @@ class FirebaseService {
         .where((w) => w.length >= 3)
         .toList();
 
-    final restaurants = _mockUsers.where((u) => u.role == 'restaurant_owner').toList();
+    final sourceList = useDemoMode ? _mockUsers : _firestoreUsers;
+    final restaurants = sourceList.where((u) => u.role == 'restaurant_owner' && u.status == 'active').toList();
     return restaurants.where((r) {
       final haystack = '${r.restaurantAddress} ${r.restaurantName}'.toLowerCase();
       return keywords.any((kw) => haystack.contains(kw));
     }).toList();
+  }
+
+  static bool isRestaurantOwnerActiveSync(String ownerId) {
+    final list = useDemoMode ? _mockUsers : _firestoreUsers;
+    final user = list.firstWhere(
+      (u) => u.uid == ownerId,
+      orElse: () => UserModel(uid: '', fullName: '', email: '', role: '', createdAt: DateTime.now()),
+    );
+    if (user.uid.isEmpty) return true; // Fallback to true if owner is not loaded yet (e.g. offline defaults)
+    if (user.role == 'restaurant_owner') {
+      return user.status == 'active';
+    }
+    return true;
   }
 
   // ─────────────────────────────────────────
@@ -913,20 +1100,22 @@ class FirebaseService {
 
   static final List<ChatSession> _mockChatSessions = [];
 
-  /// Customer: open a new support session (or return existing open one)
-  static Future<ChatSession?> startChatSession() async {
+  /// Customer: open a new support session (or return existing open one) associated with a specific order
+  static Future<ChatSession?> startChatSession([String? orderId]) async {
     final user = currentUser;
     if (user == null) return null;
 
     if (!useDemoMode) {
       try {
-        // Check if customer already has a non-closed session
-        final existing = await FirebaseFirestore.instance
+        // Check if customer already has a non-closed session for this order
+        var query = FirebaseFirestore.instance
             .collection('support_chats')
             .where('customerId', isEqualTo: user.uid)
-            .where('status', whereIn: ['waiting', 'active'])
-            .limit(1)
-            .get();
+            .where('status', whereIn: ['waiting', 'active']);
+        if (orderId != null) {
+          query = query.where('orderId', isEqualTo: orderId);
+        }
+        final existing = await query.limit(1).get();
         if (existing.docs.isNotEmpty) {
           return ChatSession.fromMap(existing.docs.first.data());
         }
@@ -938,6 +1127,7 @@ class FirebaseService {
           status: 'waiting',
           createdAt: DateTime.now(),
           updatedAt: DateTime.now(),
+          orderId: orderId,
         );
         await FirebaseFirestore.instance
             .collection('support_chats').doc(id).set(session.toMap());
@@ -947,9 +1137,11 @@ class FirebaseService {
       }
     } else {
       await Future.delayed(const Duration(milliseconds: 600));
-      // Return existing open session if any
+      // Return existing open session if any for this order
       final existing = _mockChatSessions.firstWhere(
-        (s) => s.customerId == user.uid && (s.isWaiting || s.isActive),
+        (s) => s.customerId == user.uid && 
+               (orderId == null || s.orderId == orderId) && 
+               (s.isWaiting || s.isActive),
         orElse: () => ChatSession(id: '', customerId: '', customerName: '', createdAt: DateTime.now(), updatedAt: DateTime.now()),
       );
       if (existing.id.isNotEmpty) return existing;
@@ -961,10 +1153,39 @@ class FirebaseService {
         status: 'waiting',
         createdAt: DateTime.now(),
         updatedAt: DateTime.now(),
+        orderId: orderId,
       );
       _mockChatSessions.add(session);
       _chatSessionsController.add(List.from(_mockChatSessions));
       return session;
+    }
+  }
+
+  /// Rate a resolved or closed support session
+  static Future<String?> rateSupportSession(String sessionId, int rating) async {
+    if (!useDemoMode) {
+      try {
+        await FirebaseFirestore.instance.collection('support_chats').doc(sessionId).update({
+          'rating': rating,
+        });
+        return null;
+      } catch (e) {
+        return e.toString();
+      }
+    } else {
+      await Future.delayed(const Duration(milliseconds: 200));
+      int index = _mockChatSessions.indexWhere((s) => s.id == sessionId);
+      if (index != -1) {
+        _mockChatSessions[index].rating = rating;
+        
+        // Notify any active room stream listeners of the update
+        if (_chatRoomControllers.containsKey(sessionId)) {
+          _chatRoomControllers[sessionId]!.add(_mockChatSessions[index]);
+        }
+        _chatSessionsController.add(List.from(_mockChatSessions));
+        return null;
+      }
+      return "Destek oturumu bulunamadı.";
     }
   }
 
@@ -979,6 +1200,28 @@ class FirebaseService {
     }
     Future.microtask(() => _chatSessionsController.add(List.from(_mockChatSessions)));
     return _chatSessionsController.stream;
+  }
+
+  /// Customer: stream of all support sessions for a specific customer
+  static Stream<List<ChatSession>> streamCustomerChatSessions(String customerId) {
+    if (!useDemoMode) {
+      return FirebaseFirestore.instance
+          .collection('support_chats')
+          .where('customerId', isEqualTo: customerId)
+          .snapshots()
+          .map((s) {
+            final list = s.docs.map((d) => ChatSession.fromMap(d.data())).toList();
+            list.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+            return list;
+          });
+    }
+    return _chatSessionsController.stream.map(
+      (sessions) {
+        final filtered = sessions.where((s) => s.customerId == customerId).toList();
+        filtered.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+        return filtered;
+      }
+    );
   }
 
   /// Customer: stream their own session
@@ -1040,7 +1283,7 @@ class FirebaseService {
   }
 
   /// Send a chat message
-  static Future<String?> sendChatMessage(String sessionId, String text) async {
+  static Future<String?> sendChatMessage(String sessionId, String text, {String imageUrl = ''}) async {
     final user = currentUser;
     if (user == null) return "Oturum açık değil.";
 
@@ -1050,15 +1293,18 @@ class FirebaseService {
       senderName: user.fullName,
       isFromCustomer: user.role == 'customer',
       text: text,
+      imageUrl: imageUrl,
       timestamp: DateTime.now(),
     );
+
+    final displayLastMessage = imageUrl.isNotEmpty ? "[Fotoğraf]" : text;
 
     if (!useDemoMode) {
       try {
         final ref = FirebaseFirestore.instance.collection('support_chats').doc(sessionId);
         await ref.update({
           'messages': FieldValue.arrayUnion([msg.toMap()]),
-          'lastMessage': text,
+          'lastMessage': displayLastMessage,
           'updatedAt': DateTime.now().toIso8601String(),
         });
         return null;
@@ -1070,7 +1316,7 @@ class FirebaseService {
       final idx = _mockChatSessions.indexWhere((s) => s.id == sessionId);
       if (idx == -1) return "Oturum bulunamadı.";
       _mockChatSessions[idx].messages = [..._mockChatSessions[idx].messages, msg];
-      _mockChatSessions[idx].lastMessage = text;
+      _mockChatSessions[idx].lastMessage = displayLastMessage;
       _mockChatSessions[idx].updatedAt = DateTime.now();
       _chatSessionsController.add(List.from(_mockChatSessions));
       _chatRoomControllers[sessionId]?.add(_mockChatSessions[idx]);
