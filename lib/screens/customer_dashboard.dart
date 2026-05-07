@@ -116,10 +116,12 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
         color = const Color(0xFFFF9F43);
         break;
       case 'on_the_way':
-        statusTitle = "Sipariş Yolda! 🛵";
-        statusDesc = "Siparişiniz kuryemizle kapınıza doğru yola çıktı.";
-        icon = Icons.delivery_dining;
-        color = const Color(0xFF10B981);
+        statusTitle = order.isTakeaway ? "Siparişiniz Hazır! 🛍️" : "Sipariş Yolda! 🛵";
+        statusDesc = order.isTakeaway
+            ? "Gel-Al siparişiniz şubede sizi bekliyor! İstediğiniz zaman teslim alabilirsiniz."
+            : "Siparişiniz kuryemizle kapınıza doğru yola çıktı.";
+        icon = order.isTakeaway ? Icons.shopping_bag_rounded : Icons.delivery_dining;
+        color = order.isTakeaway ? Colors.amber.shade700 : const Color(0xFF10B981);
         break;
       case 'ready_for_pickup':
         statusTitle = "Sipariş Hazır! 🛍️";
@@ -1825,10 +1827,10 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                         color: stepIndex >= 2 ? Colors.blueAccent : Colors.white12,
                       ),
                       _buildTimelineStep(
-                        "Yolda",
+                        order.isTakeaway ? "Hazırlandı" : "Yolda",
                         stepIndex >= 2,
                         stepIndex == 2,
-                        Icons.delivery_dining,
+                        order.isTakeaway ? Icons.shopping_bag_rounded : Icons.delivery_dining,
                         Colors.blueAccent,
                       ),
                       Container(
@@ -1854,72 +1856,67 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                         final String restAddress = restOwner?.restaurantAddress ?? "Konum bilgisi yükleniyor...";
                         final String restName = restOwner?.restaurantName ?? (restOwner?.fullName ?? "Restoran");
 
-                        return Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: theme.primaryColor.withValues(alpha: 0.08),
+                        return Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            onTap: () {
+                              final query = Uri.encodeComponent(restAddress);
+                              final url = Uri.parse("https://www.google.com/maps/search/?api=1&query=$query");
+                              launchUrl(url, mode: LaunchMode.externalApplication);
+                            },
                             borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: theme.primaryColor.withValues(alpha: 0.15)),
-                          ),
-                          child: Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.all(10),
-                                decoration: BoxDecoration(
-                                  color: theme.primaryColor.withValues(alpha: 0.12),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Icon(Icons.map_rounded, color: theme.primaryColor, size: 24),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                              decoration: BoxDecoration(
+                                color: theme.primaryColor.withValues(alpha: 0.08),
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(color: theme.primaryColor.withValues(alpha: 0.15)),
                               ),
-                              const SizedBox(width: 14),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      "Gel-Al Sipariş Konumu 📍",
-                                      style: GoogleFonts.outfit(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 13,
-                                        color: Colors.white,
-                                      ),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(10),
+                                    decoration: BoxDecoration(
+                                      color: theme.primaryColor.withValues(alpha: 0.12),
+                                      shape: BoxShape.circle,
                                     ),
-                                    const SizedBox(height: 3),
-                                    Text(
-                                      "$restName: $restAddress",
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: GoogleFonts.outfit(
-                                        fontSize: 11,
-                                        color: Colors.white60,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              ElevatedButton(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: theme.primaryColor,
-                                  foregroundColor: Colors.white,
-                                  elevation: 0,
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                ),
-                                onPressed: () {
-                                  final query = Uri.encodeComponent(restAddress);
-                                  final url = Uri.parse("https://www.google.com/maps/search/?api=1&query=$query");
-                                  launchUrl(url, mode: LaunchMode.externalApplication);
-                                },
-                                child: Text(
-                                  "Yol Tarifi",
-                                  style: GoogleFonts.outfit(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold,
+                                    child: Icon(Icons.map_rounded, color: theme.primaryColor, size: 22),
                                   ),
-                                ),
+                                  const SizedBox(width: 14),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Text(
+                                              "Gel-Al Sipariş Konumu",
+                                              style: GoogleFonts.outfit(
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 14,
+                                                color: Colors.white,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 6),
+                                            const Icon(Icons.open_in_new_rounded, color: Colors.white38, size: 14),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          "$restName: $restAddress",
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: GoogleFonts.outfit(
+                                            fontSize: 12,
+                                            color: Colors.white70,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
                               ),
-                            ],
+                            ),
                           ),
                         );
                       }

@@ -575,10 +575,14 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
       message = "Sipariş mutfakta hazırlanmaya başladı!";
     } else if (order.status == 'preparing') {
       nextStatus = 'on_the_way';
-      message = "Sipariş kuryeye teslim edildi, yolda!";
+      message = order.isTakeaway
+          ? "Sipariş hazırlandı, müşteri teslim alabilir!"
+          : "Sipariş kuryeye teslim edildi, yolda!";
     } else if (order.status == 'on_the_way') {
       nextStatus = 'delivered';
-      message = "Sipariş müşteriye başarıyla ulaştırıldı!";
+      message = order.isTakeaway
+          ? "Sipariş müşteriye elden teslim edildi!"
+          : "Sipariş müşteriye başarıyla ulaştırıldı!";
     } else {
       return; // Already delivered
     }
@@ -937,12 +941,12 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
         if (order.status == 'preparing') {
           statusColor = Colors.orange;
           statusLabel = 'Hazırlanıyor';
-          btnText = 'Kuryeye Teslim Et';
-          btnIcon = Icons.delivery_dining_rounded;
+          btnText = order.isTakeaway ? 'Hazırlandı Olarak İşaretle' : 'Kuryeye Teslim Et';
+          btnIcon = order.isTakeaway ? Icons.shopping_bag_rounded : Icons.delivery_dining_rounded;
         } else if (order.status == 'on_the_way') {
           statusColor = Colors.blueAccent;
-          statusLabel = 'Kuryede / Yolda';
-          btnText = 'Teslim Edildi İşaretle';
+          statusLabel = order.isTakeaway ? 'Hazırlandı / Bekliyor' : 'Kuryede / Yolda';
+          btnText = order.isTakeaway ? 'Elden Teslim Edildi' : 'Teslim Edildi İşaretle';
           btnIcon = Icons.done_all_rounded;
         } else if (order.status == 'delivered') {
           statusColor = const Color(0xFF10B981);
