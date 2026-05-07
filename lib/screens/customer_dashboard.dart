@@ -8,9 +8,33 @@ import '../services/location_api_service.dart';
 import 'login_screen.dart';
 import 'restaurant_dashboard.dart';
 import 'live_support_screen.dart';
+import 'restaurant_detail_screen.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../services/notification_service.dart';
+
+class CartManager {
+  static final Map<String, OrderItem> cart = {};
+
+  static double get total {
+    double sum = 0;
+    cart.forEach((_, item) => sum += item.foodItem.price * item.quantity);
+    return sum;
+  }
+
+  static int get itemCount {
+    int count = 0;
+    cart.forEach((_, item) => count += item.quantity);
+    return count;
+  }
+
+  static void clear() {
+    cart.clear();
+  }
+}
 
 class CustomerDashboard extends StatefulWidget {
-  const CustomerDashboard({super.key});
+  final bool showCart;
+  const CustomerDashboard({super.key, this.showCart = false});
 
   @override
   State<CustomerDashboard> createState() => _CustomerDashboardState();
@@ -25,6 +49,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
   TextEditingController? _addressController;
 
   StreamSubscription<List<OrderModel>>? _ordersSubscription;
+  StreamSubscription<String>? _geocodeCompletedSubscription;
   final Map<String, String> _lastStatuses = {};
 
   @override
@@ -45,6 +70,25 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
         }
       }
     });
+
+    _geocodeCompletedSubscription = FirebaseService.geocodeCompletedStream.listen((_) {
+      if (mounted) {
+        setState(() {});
+      }
+    });
+
+    if (widget.showCart) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _showCartSheet();
+      });
+    }
+  }
+
+  Future<void> _handleRefresh() async {
+    await Future.delayed(const Duration(milliseconds: 600));
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   void _showTopNotification(OrderModel order) {
@@ -89,6 +133,13 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
         break;
     }
 
+    // Trigger system background native local notification!
+    NotificationService.showLocalNotification(
+      id: order.id.hashCode,
+      title: statusTitle,
+      body: statusDesc,
+    ).catchError((e) => debugPrint('Local notification error: $e'));
+
     overlayEntry = OverlayEntry(
       builder: (context) {
         return Positioned(
@@ -117,31 +168,68 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
   @override
   void dispose() {
     _ordersSubscription?.cancel();
+    _geocodeCompletedSubscription?.cancel();
     _phoneController?.dispose();
     _addressController?.dispose();
     super.dispose();
   }
 
-  // Shopping Cart state
-  final Map<String, OrderItem> _cart = {};
+  // Shopping Cart state mapped to CartManager (persists across screen switches)
+  Map<String, OrderItem> get _cart => CartManager.cart;
+  double get _cartTotal => CartManager.total;
+  int get _cartItemCount => CartManager.itemCount;
 
-  double get _cartTotal {
-    double total = 0;
-    _cart.forEach((_, item) {
-      total += item.foodItem.price * item.quantity;
-    });
-    return total;
+  Future<bool> _checkCartRestaurantConstraint(FoodItem item) async {
+    if (_cart.isEmpty) return true;
+    final firstItem = _cart.values.first;
+    if (firstItem.foodItem.restaurantOwnerId == item.restaurantOwnerId) {
+      return true;
+    }
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1F2937),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(
+          "Farklı Restoran Seçimi ⚠️",
+          style: GoogleFonts.outfit(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 18),
+        ),
+        content: Text(
+          "Sepetinizde zaten başka bir restorandan ürünler bulunuyor. Yeni restorandan ürün eklemek için mevcut sepetinizi boşaltmak ister misiniz?",
+          style: GoogleFonts.outfit(color: Colors.white70, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text("İptal", style: GoogleFonts.outfit(color: Colors.white38)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text("Sepeti Boşalt", style: GoogleFonts.outfit(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      setState(() {
+        _cart.clear();
+      });
+      return true;
+    }
+    return false;
   }
 
-  int get _cartItemCount {
-    int count = 0;
-    _cart.forEach((_, item) {
-      count += item.quantity;
-    });
-    return count;
-  }
+  void _addToCart(FoodItem item) async {
+    final canAdd = await _checkCartRestaurantConstraint(item);
+    if (!canAdd) return;
 
-  void _addToCart(FoodItem item) {
     setState(() {
       if (_cart.containsKey(item.id)) {
         _cart[item.id] = OrderItem(
@@ -153,6 +241,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
       }
     });
 
+    if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -187,6 +276,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
 
   // Handle Sign Out
   Future<void> _handleSignOut() async {
+    CartManager.clear();
     await FirebaseService.signOut();
     if (mounted) {
       Navigator.of(context).pushAndRemoveUntil(
@@ -266,9 +356,6 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                   ),
                   const SizedBox(height: 12),
                   const Divider(color: Colors.white12),
-                  const SizedBox(height: 12),
-
-                  // Cart Items List
                   Expanded(
                     child: _cart.isEmpty
                         ? Center(
@@ -284,498 +371,504 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                               ],
                             ),
                           )
-                        : ListView.separated(
+                        : SingleChildScrollView(
                             physics: const BouncingScrollPhysics(),
-                            itemCount: _cart.length,
-                            separatorBuilder: (context, index) => const Divider(color: Colors.white10),
-                            itemBuilder: (context, index) {
-                              final item = _cart.values.elementAt(index);
-                              return Row(
-                                children: [
-                                  // Leading food thumbnail image
-                                  ClipRRect(
-                                    borderRadius: BorderRadius.circular(12),
-                                    child: Image.network(
-                                      item.foodItem.imageUrl,
-                                      width: 60,
-                                      height: 60,
-                                      fit: BoxFit.cover,
-                                      errorBuilder: (c, e, s) => Container(
-                                        color: Colors.white10,
-                                        width: 60,
-                                        height: 60,
-                                        child: const Icon(Icons.fastfood, color: Colors.white30),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 14),
-
-                                  // Name and subtotal
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          item.foodItem.name,
-                                          style: GoogleFonts.outfit(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          "${item.foodItem.price.toStringAsFixed(0)} TL",
-                                          style: GoogleFonts.outfit(color: Theme.of(context).primaryColor, fontSize: 14, fontWeight: FontWeight.w600),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-
-                                  // Quantity increment/decrement buttons
-                                  Container(
-                                    decoration: BoxDecoration(
-                                      color: Colors.white.withValues(alpha: 0.05),
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        IconButton(
-                                          icon: const Icon(Icons.remove, size: 16, color: Colors.white70),
-                                          onPressed: () {
-                                            _updateCartQuantity(item.foodItem.id, -1);
-                                            setModalState(() {});
-                                            setState(() {});
-                                          },
-                                        ),
-                                        Text(
-                                          "${item.quantity}",
-                                          style: GoogleFonts.outfit(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14),
-                                        ),
-                                        IconButton(
-                                          icon: const Icon(Icons.add, size: 16, color: Colors.white70),
-                                          onPressed: () {
-                                            _updateCartQuantity(item.foodItem.id, 1);
-                                            setModalState(() {});
-                                            setState(() {});
-                                          },
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              );
-                            },
-                          ),
-                  ),
-
-                  // Checkout Summary & Action Buttons
-                  if (_cart.isNotEmpty) ...[
-                    const Divider(color: Colors.white12),
-                    const SizedBox(height: 8),
-
-                    // Discount Code Input
-                    Row(
-                      children: [
-                        Expanded(
-                          child: SizedBox(
-                            height: 42,
-                            child: TextField(
-                              controller: couponController,
-                              style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
-                              decoration: InputDecoration(
-                                hintText: "İndirim Kodu Girin",
-                                hintStyle: GoogleFonts.outfit(color: Colors.white30, fontSize: 13),
-                                contentPadding: const EdgeInsets.symmetric(horizontal: 14),
-                                filled: true,
-                                fillColor: Colors.white.withValues(alpha: 0.04),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                  borderSide: BorderSide.none,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        ElevatedButton(
-                          onPressed: () async {
-                            final code = couponController.text.trim();
-                            if (code.isEmpty) return;
-                            final dc = await FirebaseService.validateDiscountCode(code, subtotal);
-                            setModalState(() {
-                              if (dc != null) {
-                                appliedDiscount = dc;
-                                discountError = "";
-                              } else {
-                                discountError = "Geçersiz kod veya alt limite ulaşılmadı.";
-                              }
-                            });
-                          },
-                          style: ElevatedButton.styleFrom(
-                            minimumSize: const Size(80, 42),
-                            padding: EdgeInsets.zero,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                          ),
-                          child: Text("Uygula", style: GoogleFonts.outfit(fontSize: 12, fontWeight: FontWeight.bold)),
-                        ),
-                      ],
-                    ),
-                    if (discountError.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4, left: 4),
-                        child: Text(discountError, style: GoogleFonts.outfit(color: Colors.redAccent, fontSize: 11)),
-                      ),
-                    const SizedBox(height: 12),
-
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text("Ara Toplam", style: GoogleFonts.outfit(color: Colors.white60)),
-                        Text("${subtotal.toStringAsFixed(0)} TL", style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w500)),
-                      ],
-                    ),
-                    if (appliedDiscount != null) ...[
-                      const SizedBox(height: 8),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Row(
-                            children: [
-                              const Icon(Icons.tag, color: Colors.greenAccent, size: 16),
-                              const SizedBox(width: 4),
-                              Text(
-                                "İndirim (${appliedDiscount!.code})",
-                                style: GoogleFonts.outfit(color: Colors.greenAccent, fontWeight: FontWeight.w500),
-                              ),
-                              IconButton(
-                                constraints: const BoxConstraints(),
-                                padding: const EdgeInsets.only(left: 4),
-                                icon: const Icon(Icons.cancel, color: Colors.white30, size: 16),
-                                onPressed: () {
-                                  setModalState(() {
-                                    appliedDiscount = null;
-                                  });
-                                },
-                              ),
-                            ],
-                          ),
-                          Text(
-                            "-${discountAmount.toStringAsFixed(0)} TL",
-                            style: GoogleFonts.outfit(color: Colors.greenAccent, fontWeight: FontWeight.bold),
-                          ),
-                        ],
-                      ),
-                    ],
-                    const SizedBox(height: 8),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text("Gönderim Ücreti", style: GoogleFonts.outfit(color: Colors.white60)),
-                        Text(
-                          deliveryFee == 0 ? "Bedava" : "${deliveryFee.toStringAsFixed(0)} TL",
-                          style: GoogleFonts.outfit(
-                            color: deliveryFee == 0 ? Colors.greenAccent : Colors.white,
-                            fontWeight: deliveryFee == 0 ? FontWeight.bold : FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (subtotal < 200) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        "Kampanya: 200 TL üzeri kargo bedava! (Eksik: ${(200 - subtotal).toStringAsFixed(0)} TL)",
-                        textAlign: TextAlign.right,
-                        style: GoogleFonts.outfit(color: Theme.of(context).colorScheme.secondary, fontSize: 11, fontWeight: FontWeight.bold),
-                      ),
-                    ],
-                    const SizedBox(height: 12),
-                    const Divider(color: Colors.white12),
-                    const SizedBox(height: 8),
-                    // Delivery Method Selection Buttons
-                    Row(
-                      children: [
-                        Expanded(
-                          child: GestureDetector(
-                            onTap: () {
-                              setModalState(() {
-                                isTakeawaySelected = false;
-                              });
-                            },
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 200),
-                              padding: const EdgeInsets.symmetric(vertical: 10),
-                              decoration: BoxDecoration(
-                                color: !isTakeawaySelected 
-                                    ? Theme.of(context).primaryColor.withValues(alpha: 0.15) 
-                                    : Colors.white.withValues(alpha: 0.02),
-                                borderRadius: BorderRadius.circular(14),
-                                border: Border.all(
-                                  color: !isTakeawaySelected 
-                                      ? Theme.of(context).primaryColor 
-                                      : Colors.white.withValues(alpha: 0.08),
-                                ),
-                              ),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(Icons.delivery_dining_rounded, 
-                                    color: !isTakeawaySelected ? Theme.of(context).primaryColor : Colors.white54, 
-                                    size: 16,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    "Adrese Teslimat",
-                                    style: GoogleFonts.outfit(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.bold,
-                                      color: !isTakeawaySelected ? Colors.white : Colors.white54,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: GestureDetector(
-                            onTap: () {
-                              setModalState(() {
-                                isTakeawaySelected = true;
-                              });
-                            },
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 200),
-                              padding: const EdgeInsets.symmetric(vertical: 10),
-                              decoration: BoxDecoration(
-                                color: isTakeawaySelected 
-                                    ? Theme.of(context).primaryColor.withValues(alpha: 0.15) 
-                                    : Colors.white.withValues(alpha: 0.02),
-                                borderRadius: BorderRadius.circular(14),
-                                border: Border.all(
-                                  color: isTakeawaySelected 
-                                      ? Theme.of(context).primaryColor 
-                                      : Colors.white.withValues(alpha: 0.08),
-                                ),
-                              ),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(Icons.shopping_bag_rounded, 
-                                    color: isTakeawaySelected ? Theme.of(context).primaryColor : Colors.white54, 
-                                    size: 16,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    "Gel-Al (Pick-up)",
-                                    style: GoogleFonts.outfit(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.bold,
-                                      color: isTakeawaySelected ? Colors.white : Colors.white54,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-
-                    // Conditionally show Address Picker or Takeaway Instructions
-                    if (isTakeawaySelected)
-                      FutureBuilder<UserModel?>(
-                        future: restFuture,
-                        builder: (context, restSnap) {
-                          final restUser = restSnap.data;
-                          final restName = restUser?.restaurantName.isNotEmpty == true ? restUser!.restaurantName : "Restoran Merkez Şubesi";
-                          final restAddr = restUser?.restaurantAddress.isNotEmpty == true ? restUser!.restaurantAddress : "Restoran Şubesi";
-
-                          return Container(
-                            padding: const EdgeInsets.all(14),
-                            decoration: BoxDecoration(
-                              color: Theme.of(context).primaryColor.withValues(alpha: 0.06),
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(color: Theme.of(context).primaryColor.withValues(alpha: 0.15)),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Icon(Icons.storefront_rounded, color: Theme.of(context).primaryColor, size: 18),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      "Gel-Al Teslim Noktası",
-                                      style: GoogleFonts.outfit(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  restName,
-                                  style: GoogleFonts.outfit(fontSize: 13, fontWeight: FontWeight.bold, color: Theme.of(context).primaryColor),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  restAddr,
-                                  style: GoogleFonts.outfit(fontSize: 11, color: Colors.white70),
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  "💡 Siparişiniz hazırlandığında bilgilendirileceksiniz. Lütfen restoranımıza gelerek sıcak sıcak teslim alınız.",
-                                  style: GoogleFonts.outfit(fontSize: 10, color: Colors.white38, fontStyle: FontStyle.italic),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      )
-                    else
-                      // Delivery Address Selection Section inside Cart
-                      StreamBuilder<List<DeliveryAddress>>(
-                        stream: FirebaseService.streamAddresses(user?.uid ?? ''),
-                        builder: (context, addrSnapshot) {
-                          final addresses = addrSnapshot.data ?? [];
-                          final hasSelected = user?.address.isNotEmpty == true;
-                          
-                          return Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.02),
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(
-                                color: hasSelected 
-                                    ? Theme.of(context).primaryColor.withValues(alpha: 0.2) 
-                                    : Colors.redAccent.withValues(alpha: 0.3),
-                              ),
-                            ),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                                Row(
-                                  children: [
-                                    Icon(
-                                      Icons.location_on_rounded, 
-                                      color: hasSelected ? Theme.of(context).primaryColor : Colors.redAccent, 
-                                      size: 18,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      "Teslimat Adresi",
-                                      style: GoogleFonts.outfit(
-                                        fontSize: 12, 
-                                        fontWeight: FontWeight.bold, 
-                                        color: hasSelected ? Colors.white : Colors.redAccent,
-                                      ),
-                                    ),
-                                    const Spacer(),
-                                    if (addresses.isNotEmpty)
-                                      PopupMenuButton<DeliveryAddress>(
-                                        icon: Icon(Icons.swap_horiz_rounded, color: Theme.of(context).primaryColor, size: 18),
-                                        tooltip: "Adresi Değiştir",
-                                        padding: EdgeInsets.zero,
-                                        constraints: const BoxConstraints(),
-                                        onSelected: (addr) async {
-                                          if (user != null) await FirebaseService.selectAddress(user.uid, addr.id, addr.fullAddress, addr.phone);
-                                          setModalState(() {});
-                                          setState(() {});
-                                        },
-                                        itemBuilder: (context) {
-                                          return addresses.map((addr) {
-                                            return PopupMenuItem<DeliveryAddress>(
-                                              value: addr,
-                                              child: Text(
-                                                "${addr.title}: ${addr.fullAddress}",
-                                                style: GoogleFonts.outfit(fontSize: 12),
+                                // Cart items list
+                                ..._cart.values.map((item) {
+                                  return Padding(
+                                    padding: const EdgeInsets.symmetric(vertical: 8.0),
+                                    child: Row(
+                                      children: [
+                                        // Leading food thumbnail image
+                                        ClipRRect(
+                                          borderRadius: BorderRadius.circular(12),
+                                          child: Image.network(
+                                            item.foodItem.imageUrl,
+                                            width: 60,
+                                            height: 60,
+                                            fit: BoxFit.cover,
+                                            errorBuilder: (c, e, s) => Container(
+                                              color: Colors.white10,
+                                              width: 60,
+                                              height: 60,
+                                              child: const Icon(Icons.fastfood, color: Colors.white30),
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 14),
+
+                                        // Name and subtotal
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                item.foodItem.name,
+                                                style: GoogleFonts.outfit(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white),
                                                 maxLines: 1,
                                                 overflow: TextOverflow.ellipsis,
                                               ),
-                                            );
-                                          }).toList();
-                                        },
-                                      )
-                                    else
-                                      GestureDetector(
-                                        onTap: () {
-                                          Navigator.pop(context); // close cart
-                                          setState(() {
-                                            _currentTab = 2; // Swap to profile
-                                          });
-                                        },
-                                        child: Text(
-                                          "+ Adres Ekle",
-                                          style: GoogleFonts.outfit(
-                                            fontSize: 12, 
-                                            fontWeight: FontWeight.bold, 
-                                            color: Theme.of(context).primaryColor,
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                "${item.foodItem.price.toStringAsFixed(0)} TL",
+                                                style: GoogleFonts.outfit(color: Theme.of(context).primaryColor, fontSize: 14, fontWeight: FontWeight.w600),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+
+                                        // Quantity increment/decrement buttons
+                                        Container(
+                                          decoration: BoxDecoration(
+                                            color: Colors.white.withValues(alpha: 0.05),
+                                            borderRadius: BorderRadius.circular(12),
+                                          ),
+                                          child: Row(
+                                            children: [
+                                              IconButton(
+                                                icon: const Icon(Icons.remove, size: 16, color: Colors.white70),
+                                                onPressed: () {
+                                                  _updateCartQuantity(item.foodItem.id, -1);
+                                                  setModalState(() {});
+                                                  setState(() {});
+                                                },
+                                              ),
+                                              Text(
+                                                "${item.quantity}",
+                                                style: GoogleFonts.outfit(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14),
+                                              ),
+                                              IconButton(
+                                                icon: const Icon(Icons.add, size: 16, color: Colors.white70),
+                                                onPressed: () {
+                                                  _updateCartQuantity(item.foodItem.id, 1);
+                                                  setModalState(() {});
+                                                  setState(() {});
+                                                },
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                }),
+
+                                const Divider(color: Colors.white12, height: 24),
+
+                                // Discount Code Input
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: SizedBox(
+                                        height: 42,
+                                        child: TextField(
+                                          controller: couponController,
+                                          style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
+                                          decoration: InputDecoration(
+                                            hintText: "İndirim Kodu Girin",
+                                            hintStyle: GoogleFonts.outfit(color: Colors.white30, fontSize: 13),
+                                            contentPadding: const EdgeInsets.symmetric(horizontal: 14),
+                                            filled: true,
+                                            fillColor: Colors.white.withValues(alpha: 0.04),
+                                            border: OutlineInputBorder(
+                                              borderRadius: BorderRadius.circular(10),
+                                              borderSide: BorderSide.none,
+                                            ),
                                           ),
                                         ),
                                       ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    ElevatedButton(
+                                      onPressed: () async {
+                                        final code = couponController.text.trim();
+                                        if (code.isEmpty) return;
+                                        final dc = await FirebaseService.validateDiscountCode(code, subtotal);
+                                        setModalState(() {
+                                          if (dc != null) {
+                                            appliedDiscount = dc;
+                                            discountError = "";
+                                          } else {
+                                            discountError = "Geçersiz kod veya alt limite ulaşılmadı.";
+                                          }
+                                        });
+                                      },
+                                      style: ElevatedButton.styleFrom(
+                                        minimumSize: const Size(80, 42),
+                                        padding: EdgeInsets.zero,
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                      ),
+                                      child: Text("Uygula", style: GoogleFonts.outfit(fontSize: 12, fontWeight: FontWeight.bold)),
+                                    ),
                                   ],
                                 ),
-                                const SizedBox(height: 6),
-                                Text(
-                                  hasSelected 
-                                      ? (user?.address ?? '') 
-                                      : "Lütfen sipariş için bir teslimat adresi belirleyin.",
-                                  style: GoogleFonts.outfit(
-                                    fontSize: 11, 
-                                    color: hasSelected ? Colors.white60 : Colors.redAccent.withValues(alpha: 0.8),
+                                if (discountError.isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 4, left: 4),
+                                    child: Text(discountError, style: GoogleFonts.outfit(color: Colors.redAccent, fontSize: 11)),
                                   ),
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
+                                const SizedBox(height: 16),
+
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text("Ara Toplam", style: GoogleFonts.outfit(color: Colors.white60)),
+                                    Text("${subtotal.toStringAsFixed(0)} TL", style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w500)),
+                                  ],
+                                ),
+                                if (appliedDiscount != null) ...[
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          const Icon(Icons.tag, color: Colors.greenAccent, size: 16),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            "İndirim (${appliedDiscount!.code})",
+                                            style: GoogleFonts.outfit(color: Colors.greenAccent, fontWeight: FontWeight.w500),
+                                          ),
+                                          IconButton(
+                                            constraints: const BoxConstraints(),
+                                            padding: const EdgeInsets.only(left: 4),
+                                            icon: const Icon(Icons.cancel, color: Colors.white30, size: 16),
+                                            onPressed: () {
+                                              setModalState(() {
+                                                appliedDiscount = null;
+                                              });
+                                            },
+                                          ),
+                                        ],
+                                      ),
+                                      Text(
+                                        "-${discountAmount.toStringAsFixed(0)} TL",
+                                        style: GoogleFonts.outfit(color: Colors.greenAccent, fontWeight: FontWeight.bold),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                                const SizedBox(height: 8),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text("Gönderim Ücreti", style: GoogleFonts.outfit(color: Colors.white60)),
+                                    Text(
+                                      deliveryFee == 0 ? "Bedava" : "${deliveryFee.toStringAsFixed(0)} TL",
+                                      style: GoogleFonts.outfit(
+                                        color: deliveryFee == 0 ? Colors.greenAccent : Colors.white,
+                                        fontWeight: deliveryFee == 0 ? FontWeight.bold : FontWeight.w500,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                if (subtotal < 200) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    "Kampanya: 200 TL üzeri kargo bedava! (Eksik: ${(200 - subtotal).toStringAsFixed(0)} TL)",
+                                    textAlign: TextAlign.right,
+                                    style: GoogleFonts.outfit(color: Theme.of(context).colorScheme.secondary, fontSize: 11, fontWeight: FontWeight.bold),
+                                  ),
+                                ],
+                                const SizedBox(height: 16),
+                                const Divider(color: Colors.white12),
+                                const SizedBox(height: 12),
+
+                                // Delivery Method Selection Buttons
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: GestureDetector(
+                                        onTap: () {
+                                          setModalState(() {
+                                            isTakeawaySelected = false;
+                                          });
+                                        },
+                                        child: AnimatedContainer(
+                                          duration: const Duration(milliseconds: 200),
+                                          padding: const EdgeInsets.symmetric(vertical: 10),
+                                          decoration: BoxDecoration(
+                                            color: !isTakeawaySelected 
+                                                ? Theme.of(context).primaryColor.withValues(alpha: 0.15) 
+                                                : Colors.white.withValues(alpha: 0.02),
+                                            borderRadius: BorderRadius.circular(14),
+                                            border: Border.all(
+                                              color: !isTakeawaySelected 
+                                                  ? Theme.of(context).primaryColor 
+                                                  : Colors.white.withValues(alpha: 0.08),
+                                            ),
+                                          ),
+                                          child: Row(
+                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            children: [
+                                              Icon(Icons.delivery_dining_rounded, 
+                                                color: !isTakeawaySelected ? Theme.of(context).primaryColor : Colors.white54, 
+                                                size: 16,
+                                              ),
+                                              const SizedBox(width: 6),
+                                              Text(
+                                                "Adrese Teslimat",
+                                                style: GoogleFonts.outfit(
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: !isTakeawaySelected ? Colors.white : Colors.white54,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: GestureDetector(
+                                        onTap: () {
+                                          setModalState(() {
+                                            isTakeawaySelected = true;
+                                          });
+                                        },
+                                        child: AnimatedContainer(
+                                          duration: const Duration(milliseconds: 200),
+                                          padding: const EdgeInsets.symmetric(vertical: 10),
+                                          decoration: BoxDecoration(
+                                            color: isTakeawaySelected 
+                                                ? Theme.of(context).primaryColor.withValues(alpha: 0.15) 
+                                                : Colors.white.withValues(alpha: 0.02),
+                                            borderRadius: BorderRadius.circular(14),
+                                            border: Border.all(
+                                              color: isTakeawaySelected 
+                                                  ? Theme.of(context).primaryColor 
+                                                  : Colors.white.withValues(alpha: 0.08),
+                                            ),
+                                          ),
+                                          child: Row(
+                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            children: [
+                                              Icon(Icons.shopping_bag_rounded, 
+                                                color: isTakeawaySelected ? Theme.of(context).primaryColor : Colors.white54, 
+                                                size: 16,
+                                              ),
+                                              const SizedBox(width: 6),
+                                              Text(
+                                                "Gel-Al (Pick-up)",
+                                                style: GoogleFonts.outfit(
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: isTakeawaySelected ? Colors.white : Colors.white54,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 12),
+
+                                // Conditionally show Address Picker or Takeaway Instructions
+                                if (isTakeawaySelected)
+                                  FutureBuilder<UserModel?>(
+                                    future: restFuture,
+                                    builder: (context, restSnap) {
+                                      final restUser = restSnap.data;
+                                      final restName = restUser?.restaurantName.isNotEmpty == true ? restUser!.restaurantName : "Restoran Merkez Şubesi";
+                                      final restAddr = restUser?.restaurantAddress.isNotEmpty == true ? restUser!.restaurantAddress : "Restoran Şubesi";
+
+                                      return Container(
+                                        padding: const EdgeInsets.all(14),
+                                        decoration: BoxDecoration(
+                                          color: Theme.of(context).primaryColor.withValues(alpha: 0.06),
+                                          borderRadius: BorderRadius.circular(16),
+                                          border: Border.all(color: Theme.of(context).primaryColor.withValues(alpha: 0.15)),
+                                        ),
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                              children: [
+                                                Icon(Icons.storefront_rounded, color: Theme.of(context).primaryColor, size: 18),
+                                                const SizedBox(width: 8),
+                                                Text(
+                                                  "Gel-Al Teslim Noktası",
+                                                  style: GoogleFonts.outfit(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
+                                                ),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 8),
+                                            Text(
+                                              restName,
+                                              style: GoogleFonts.outfit(fontSize: 13, fontWeight: FontWeight.bold, color: Theme.of(context).primaryColor),
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              restAddr,
+                                              style: GoogleFonts.outfit(fontSize: 11, color: Colors.white70),
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                            const SizedBox(height: 8),
+                                            Text(
+                                              "💡 Siparişiniz hazırlandığında bilgilendirileceksiniz. Lütfen restoranımıza gelerek sıcak sıcak teslim alınız.",
+                                              style: GoogleFonts.outfit(fontSize: 10, color: Colors.white38, fontStyle: FontStyle.italic),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    },
+                                  )
+                                else
+                                  // Delivery Address Selection Section inside Cart
+                                  StreamBuilder<List<DeliveryAddress>>(
+                                    stream: FirebaseService.streamAddresses(user?.uid ?? ''),
+                                    builder: (context, addrSnapshot) {
+                                      final addresses = addrSnapshot.data ?? [];
+                                      final hasSelected = user?.address.isNotEmpty == true;
+                                      
+                                      return Container(
+                                        padding: const EdgeInsets.all(12),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white.withValues(alpha: 0.02),
+                                          borderRadius: BorderRadius.circular(16),
+                                          border: Border.all(
+                                            color: hasSelected 
+                                                ? Theme.of(context).primaryColor.withValues(alpha: 0.2) 
+                                                : Colors.redAccent.withValues(alpha: 0.3),
+                                          ),
+                                        ),
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                                          children: [
+                                            Row(
+                                              children: [
+                                                Icon(
+                                                  Icons.location_on_rounded, 
+                                                  color: hasSelected ? Theme.of(context).primaryColor : Colors.redAccent, 
+                                                  size: 18,
+                                                ),
+                                                const SizedBox(width: 8),
+                                                Text(
+                                                  "Teslimat Adresi",
+                                                  style: GoogleFonts.outfit(
+                                                    fontSize: 12, 
+                                                    fontWeight: FontWeight.bold, 
+                                                    color: hasSelected ? Colors.white : Colors.redAccent,
+                                                  ),
+                                                ),
+                                                const Spacer(),
+                                                if (addresses.isNotEmpty)
+                                                  PopupMenuButton<DeliveryAddress>(
+                                                    icon: Icon(Icons.swap_horiz_rounded, color: Theme.of(context).primaryColor, size: 18),
+                                                    tooltip: "Adresi Değiştir",
+                                                    padding: EdgeInsets.zero,
+                                                    constraints: const BoxConstraints(),
+                                                    onSelected: (addr) async {
+                                                      if (user != null) await FirebaseService.selectAddress(user.uid, addr.id, addr.fullAddress, addr.phone);
+                                                      setModalState(() {});
+                                                      setState(() {});
+                                                    },
+                                                    itemBuilder: (context) {
+                                                      return addresses.map((addr) {
+                                                        return PopupMenuItem<DeliveryAddress>(
+                                                          value: addr,
+                                                          child: Text(
+                                                            "${addr.title}: ${addr.fullAddress}",
+                                                            style: GoogleFonts.outfit(fontSize: 12),
+                                                            maxLines: 1,
+                                                            overflow: TextOverflow.ellipsis,
+                                                          ),
+                                                        );
+                                                      }).toList();
+                                                    },
+                                                  )
+                                                else
+                                                  GestureDetector(
+                                                    onTap: () {
+                                                      Navigator.pop(context); // close cart
+                                                      setState(() {
+                                                        _currentTab = 2; // Swap to profile
+                                                      });
+                                                    },
+                                                    child: Text(
+                                                      "+ Adres Ekle",
+                                                      style: GoogleFonts.outfit(
+                                                        fontSize: 12, 
+                                                        fontWeight: FontWeight.bold, 
+                                                        color: Theme.of(context).primaryColor,
+                                                      ),
+                                                    ),
+                                                  ),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 6),
+                                            Text(
+                                              hasSelected 
+                                                  ? (user?.address ?? '') 
+                                                  : "Lütfen sipariş için bir teslimat adresi belirleyin.",
+                                              style: GoogleFonts.outfit(
+                                                fontSize: 11, 
+                                                color: hasSelected ? Colors.white60 : Colors.redAccent.withValues(alpha: 0.8),
+                                              ),
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                const SizedBox(height: 12),
+                                const Divider(color: Colors.white12),
+                                const SizedBox(height: 12),
+
+                                // Premium Custom Order Note Input Field
+                                TextField(
+                                  controller: noteController,
+                                  style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
+                                  decoration: InputDecoration(
+                                    isDense: true,
+                                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                    filled: true,
+                                    fillColor: Colors.white.withValues(alpha: 0.02),
+                                    hintText: "Sipariş Notu Ekle (örn. Kapıyı çalmayın)",
+                                    hintStyle: GoogleFonts.outfit(color: Colors.white38, fontSize: 13),
+                                    prefixIcon: const Icon(Icons.note_alt_outlined, color: Colors.white38, size: 18),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                      borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.05)),
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                      borderSide: BorderSide(color: Theme.of(context).primaryColor.withValues(alpha: 0.3)),
+                                    ),
+                                    enabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                      borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.03)),
+                                    ),
+                                  ),
                                 ),
                               ],
                             ),
-                          );
-                        },
-                      ),
-                     const SizedBox(height: 8),
-                    const Divider(color: Colors.white12),
-                    const SizedBox(height: 12),
+                          ),
+                  ),
 
-                    // Premium Custom Order Note Input Field
-                    TextField(
-                      controller: noteController,
-                      style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
-                      decoration: InputDecoration(
-                        isDense: true,
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                        filled: true,
-                        fillColor: Colors.white.withValues(alpha: 0.02),
-                        hintText: "Sipariş Notu Ekle (örn. Kapıyı çalmayın)",
-                        hintStyle: GoogleFonts.outfit(color: Colors.white38, fontSize: 13),
-                        prefixIcon: const Icon(Icons.note_alt_outlined, color: Colors.white38, size: 18),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.05)),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: BorderSide(color: Theme.of(context).primaryColor.withValues(alpha: 0.3)),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.03)),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-
+                  // Pinned bottom bar actions
+                  if (_cart.isNotEmpty) ...[
+                    const Divider(color: Colors.white12, height: 20),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text("Toplam Tutar", style: GoogleFonts.outfit(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+                        Text("Toplam Tutar", style: GoogleFonts.outfit(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
                         Text(
                           "${total.toStringAsFixed(0)} TL",
-                          style: GoogleFonts.outfit(fontSize: 20, fontWeight: FontWeight.w800, color: Theme.of(context).primaryColor),
+                          style: GoogleFonts.outfit(fontSize: 18, fontWeight: FontWeight.w800, color: Theme.of(context).primaryColor),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 12),
 
                     // Pre-fetch restaurant limits validation inside FutureBuilder
                     FutureBuilder<UserModel?>(
@@ -789,7 +882,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                           children: [
                             if (underMin) ...[
                               Container(
-                                margin: const EdgeInsets.only(bottom: 14),
+                                margin: const EdgeInsets.only(bottom: 12),
                                 padding: const EdgeInsets.all(12),
                                 decoration: BoxDecoration(
                                   color: Colors.redAccent.withValues(alpha: 0.1),
@@ -1336,7 +1429,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
           },
         ),
 
-        // Main Food List Grid
+        // Main Restaurants Grid
         Expanded(
           child: StreamBuilder<List<FoodItem>>(
             stream: FirebaseService.streamFoodItems(),
@@ -1350,26 +1443,73 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
               }
 
               final allItems = snapshot.data ?? [];
-              
-              // Filter food items based on Search query, Category & Restaurant approval status
-              final filteredItems = allItems.where((item) {
-                final matchQuery = item.name.toLowerCase().contains(_searchQuery) ||
-                                   item.description.toLowerCase().contains(_searchQuery) ||
-                                   item.category.toLowerCase().contains(_searchQuery);
-                final matchCategory = _selectedCategory == "Hepsi" || item.category == _selectedCategory;
-                final isRestaurantActive = FirebaseService.isRestaurantOwnerActiveSync(item.restaurantOwnerId);
-                return matchQuery && matchCategory && isRestaurantActive;
+              final nearby = FirebaseService.getNearbyRestaurants(user?.address ?? "");
+
+              // Filter nearby restaurants based on category & search query
+              final filteredRestaurants = nearby.where((rest) {
+                // 1. Category Filter: must have at least one food item in selected category
+                if (_selectedCategory != "Hepsi") {
+                  final hasItemInCat = allItems.any((item) =>
+                    item.restaurantOwnerId == rest.uid &&
+                    item.category == _selectedCategory
+                  );
+                  if (!hasItemInCat) return false;
+                }
+
+                // 2. Search Query Filter
+                if (_searchQuery.isNotEmpty) {
+                  final restName = rest.restaurantName.isNotEmpty ? rest.restaurantName : rest.fullName;
+                  final matchRestName = restName.toLowerCase().contains(_searchQuery) ||
+                                        rest.restaurantAddress.toLowerCase().contains(_searchQuery);
+                  if (matchRestName) return true;
+
+                  final matchFoods = allItems.any((item) =>
+                    item.restaurantOwnerId == rest.uid &&
+                    (item.name.toLowerCase().contains(_searchQuery) ||
+                     item.description.toLowerCase().contains(_searchQuery))
+                  );
+                  return matchFoods;
+                }
+
+                return true;
               }).toList();
 
-              if (filteredItems.isEmpty) {
+              if (user == null || user.address.trim().isEmpty) {
                 return Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.search_off_rounded, size: 54, color: Colors.white24),
+                      const Icon(Icons.location_off_rounded, size: 60, color: Colors.orangeAccent),
+                      const SizedBox(height: 16),
+                      Text(
+                        "Lütfen Önce Teslimat Adresi Seçin",
+                        style: GoogleFonts.outfit(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        "Restoranları görebilmek için\nyukarıdan bir teslimat adresi girmeli veya seçmelisiniz.",
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.outfit(color: Colors.white38, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                );
+              }
+
+              if (filteredRestaurants.isEmpty) {
+                return RefreshIndicator(
+                  onRefresh: _handleRefresh,
+                  color: theme.primaryColor,
+                  backgroundColor: theme.cardColor,
+                  child: ListView(
+                    physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+                    children: [
+                      SizedBox(height: MediaQuery.of(context).size.height * 0.15),
+                      const Icon(Icons.search_off_rounded, size: 54, color: Colors.white24),
                       const SizedBox(height: 12),
                       Text(
-                        "Aradığınız kriterlere uygun yemek bulunamadı.",
+                        "Aradığınız kriterlere veya mesafeye uygun restoran bulunamadı.",
+                        textAlign: TextAlign.center,
                         style: GoogleFonts.outfit(color: Colors.white38, fontSize: 14),
                       ),
                     ],
@@ -1377,134 +1517,155 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                 );
               }
 
-              return GridView.builder(
-                padding: const EdgeInsets.fromLTRB(20, 10, 20, 80), // bottom spacing for FAB
-                physics: const BouncingScrollPhysics(),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
-                  childAspectRatio: 0.72,
-                  crossAxisSpacing: 14,
-                  mainAxisSpacing: 14,
-                ),
-                itemCount: filteredItems.length,
-                itemBuilder: (context, index) {
-                  final meal = filteredItems[index];
-                  return Container(
-                    decoration: BoxDecoration(
-                      color: theme.cardColor,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
-                    ),
-                    clipBehavior: Clip.antiAlias,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        // Food Image with Rating chip overlays
-                        Expanded(
-                          flex: 11,
-                          child: Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              Image.network(
-                                meal.imageUrl,
-                                fit: BoxFit.cover,
-                                errorBuilder: (c, e, s) => Container(
-                                  color: Colors.white10,
-                                  child: const Icon(Icons.fastfood_rounded, size: 40, color: Colors.white24),
-                                ),
-                              ),
-                              Positioned(
-                                top: 8,
-                                right: 8,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                  decoration: BoxDecoration(
-                                    color: Colors.black.withValues(alpha: 0.65),
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      const Icon(Icons.star, color: Colors.amber, size: 12),
-                                      const SizedBox(width: 3),
-                                      Text(
-                                        "${meal.rating}",
-                                        style: GoogleFonts.outfit(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              Positioned(
-                                bottom: 8,
-                                left: 8,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                  decoration: BoxDecoration(
-                                    color: theme.primaryColor.withValues(alpha: 0.85),
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  child: Text(
-                                    meal.category,
-                                    style: GoogleFonts.outfit(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.white),
-                                  ),
-                                ),
-                              )
-                            ],
+              return RefreshIndicator(
+                onRefresh: _handleRefresh,
+                color: theme.primaryColor,
+                backgroundColor: theme.cardColor,
+                child: GridView.builder(
+                  padding: const EdgeInsets.fromLTRB(20, 10, 20, 80), // bottom spacing for FAB
+                  physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    childAspectRatio: 0.72,
+                    crossAxisSpacing: 14,
+                    mainAxisSpacing: 14,
+                  ),
+                  itemCount: filteredRestaurants.length,
+                  itemBuilder: (context, index) {
+                    final rest = filteredRestaurants[index];
+                    final String rName = rest.restaurantName.isNotEmpty ? rest.restaurantName : rest.fullName;
+                    final double dist = FirebaseService.calculateDistanceKm(user.address, rest.restaurantAddress);
+                    
+                    return GestureDetector(
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => RestaurantDetailScreen(
+                              restaurant: rest,
+                              cart: _cart,
+                              onAdd: _addToCart,
+                              onUpdateQuantity: _updateCartQuantity,
+                              onShowCart: _showCartSheet,
+                              cartItemCount: _cartItemCount,
+                              cartTotal: _cartTotal,
+                            ),
                           ),
+                        ).then((_) {
+                          // Force state rebuild when returning from Detail screen to keep cart badge in sync
+                          setState(() {});
+                        });
+                      },
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: theme.cardColor,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
                         ),
-
-                        // Food Title & Description
-                        Expanded(
-                          flex: 10,
-                          child: Padding(
-                            padding: const EdgeInsets.all(12.0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  meal.name,
-                                  style: GoogleFonts.outfit(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                const SizedBox(height: 4),
-                                Expanded(
-                                  child: Text(
-                                    meal.description,
-                                    style: GoogleFonts.outfit(fontSize: 11, color: Colors.white38),
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
+                        clipBehavior: Clip.antiAlias,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            // Restaurant Image with info overlay
+                            Expanded(
+                              flex: 11,
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  Image.network(
+                                    "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=400&auto=format&fit=crop&q=60",
+                                    fit: BoxFit.cover,
                                   ),
-                                ),
-                                const SizedBox(height: 6),
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  Container(
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topCenter,
+                                        end: Alignment.bottomCenter,
+                                        colors: [Colors.transparent, Colors.black.withValues(alpha: 0.85)],
+                                      ),
+                                    ),
+                                  ),
+                                  Positioned(
+                                    bottom: 8,
+                                    left: 8,
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF10B981).withValues(alpha: 0.85),
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(Icons.delivery_dining, color: Colors.white, size: 10),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            "${dist.toStringAsFixed(1)} km",
+                                            style: GoogleFonts.outfit(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.white),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  )
+                                ],
+                              ),
+                            ),
+
+                            // Restaurant Title & Distance
+                            Expanded(
+                              flex: 10,
+                              child: Padding(
+                                padding: const EdgeInsets.all(12.0),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
-                                      "${meal.price.toStringAsFixed(0)} TL",
-                                      style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 15, color: theme.primaryColor),
+                                      rName,
+                                      style: GoogleFonts.outfit(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
                                     ),
-                                    GestureDetector(
-                                      onTap: () => _addToCart(meal),
-                                      child: Container(
-                                        padding: const EdgeInsets.all(6),
-                                        decoration: BoxDecoration(
-                                          color: theme.primaryColor.withValues(alpha: 0.12),
-                                          shape: BoxShape.circle,
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      rest.restaurantAddress,
+                                      style: GoogleFonts.outfit(fontSize: 11, color: Colors.white38),
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    const Spacer(),
+                                    Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Text(
+                                          "Min: ${rest.minOrderAmount.toStringAsFixed(0)} TL",
+                                          style: GoogleFonts.outfit(fontWeight: FontWeight.w600, fontSize: 11, color: Colors.white60),
                                         ),
-                                        child: Icon(Icons.add, size: 18, color: theme.primaryColor),
-                                      ),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                          decoration: BoxDecoration(
+                                            color: theme.primaryColor.withValues(alpha: 0.12),
+                                            borderRadius: BorderRadius.circular(12),
+                                          ),
+                                          child: Text(
+                                            "Menüye Bak",
+                                            style: GoogleFonts.outfit(
+                                              fontSize: 9,
+                                              fontWeight: FontWeight.bold,
+                                              color: theme.primaryColor,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ],
                                 ),
-                              ],
+                              ),
                             ),
-                          ),
+                          ],
                         ),
-                      ],
-                    ),
-                  );
-                },
+                      ),
+                    );
+                  },
+                ),
               );
             },
           ),
@@ -1554,9 +1715,13 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
           );
         }
 
-        return ListView.builder(
-          physics: const BouncingScrollPhysics(),
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        return RefreshIndicator(
+          onRefresh: _handleRefresh,
+          color: theme.primaryColor,
+          backgroundColor: theme.cardColor,
+          child: ListView.builder(
+            physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
           itemCount: customerOrders.length,
           itemBuilder: (context, index) {
             final order = customerOrders[index];
@@ -1677,6 +1842,86 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                       ),
                     ],
                   ),
+                  if (order.isTakeaway) ...[
+                    const SizedBox(height: 16),
+                    Builder(
+                      builder: (ctx) {
+                        final firstItem = order.items.isNotEmpty ? order.items.first.foodItem : null;
+                        final restOwner = firstItem != null ? FirebaseService.getRestaurantOwnerSync(firstItem.restaurantOwnerId) : null;
+                        final String restAddress = restOwner?.restaurantAddress ?? "Konum bilgisi yükleniyor...";
+                        final String restName = restOwner?.restaurantName ?? (restOwner?.fullName ?? "Restoran");
+
+                        return Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: theme.primaryColor.withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: theme.primaryColor.withValues(alpha: 0.15)),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  color: theme.primaryColor.withValues(alpha: 0.12),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(Icons.map_rounded, color: theme.primaryColor, size: 24),
+                              ),
+                              const SizedBox(width: 14),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      "Gel-Al Sipariş Konumu 📍",
+                                      style: GoogleFonts.outfit(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 13,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      "$restName: $restAddress",
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: GoogleFonts.outfit(
+                                        fontSize: 11,
+                                        color: Colors.white60,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: theme.primaryColor,
+                                  foregroundColor: Colors.white,
+                                  elevation: 0,
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                ),
+                                onPressed: () {
+                                  final query = Uri.encodeComponent(restAddress);
+                                  final url = Uri.parse("https://www.google.com/maps/search/?api=1&query=$query");
+                                  launchUrl(url, mode: LaunchMode.externalApplication);
+                                },
+                                child: Text(
+                                  "Yol Tarifi",
+                                  style: GoogleFonts.outfit(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.end,
@@ -1787,7 +2032,8 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
               ),
             );
           },
-        );
+        ),
+      );
       },
     );
   }
@@ -2134,19 +2380,25 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
     _phoneController ??= TextEditingController(text: user.phone);
     _addressController ??= TextEditingController(text: user.address);
 
-    final bool canManage = user.role == 'admin' || user.role == 'restaurant_owner';
+    final bool canManage = user.role == 'admin' || user.role == 'restaurant_owner' || user.role == 'support';
     final String roleLabel = user.role == 'admin' 
         ? 'Sistem Yöneticisi (Admin)' 
         : user.role == 'restaurant_owner' 
             ? 'Restoran Sahibi' 
-            : 'Müşteri';
+            : user.role == 'support'
+                ? 'Destek Görevlisi'
+                : 'Müşteri';
 
-    return SingleChildScrollView(
-      physics: const BouncingScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(24, 20, 24, 80),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
+    return RefreshIndicator(
+      onRefresh: _handleRefresh,
+      color: theme.primaryColor,
+      backgroundColor: theme.cardColor,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 80),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
           // Branch Invitation Notifications
           StreamBuilder<List<BranchInvitation>>(
             stream: FirebaseService.streamBranchInvitations(),
@@ -2872,7 +3124,9 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                     const Icon(Icons.dashboard_customize_rounded, color: Colors.black, size: 20),
                     const SizedBox(width: 8),
                     Text(
-                      user.role == 'restaurant_owner' ? "Restoran Paneline Geç" : "Yönetim Paneline Geç",
+                      user.role == 'restaurant_owner' 
+                          ? "Restoran Paneline Geç" 
+                          : (user.role == 'support' ? "Destek Paneline Geç" : "Yönetim Paneline Geç"),
                       style: GoogleFonts.outfit(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black),
                     ),
                   ],
@@ -2902,7 +3156,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
           ),
         ],
       ),
-    );
+    ),);
   }
 
   Widget _buildProfileItem({

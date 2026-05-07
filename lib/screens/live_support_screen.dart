@@ -471,10 +471,7 @@ class _LiveSupportScreenState extends State<LiveSupportScreen> {
       body: StreamBuilder<ChatSession?>(
         stream: FirebaseService.streamMySession(_session.id),
         builder: (context, snap) {
-          if (!snap.hasData) {
-            return const Center(child: CupertinoActivityIndicator(radius: 12, color: Colors.white));
-          }
-          final session = snap.data!;
+          final session = snap.data ?? _session;
           if (session.id.isEmpty) {
             return Center(child: Text('Oturum bulunamadı.', style: GoogleFonts.outfit(color: Colors.white54)));
           }
@@ -513,7 +510,7 @@ class _LiveSupportScreenState extends State<LiveSupportScreen> {
 
               // Input bar (only if session is active)
               if (!session.isClosed)
-                _buildInputBar(theme, session.isWaiting && !isAgent),
+                _buildInputBar(theme, false),
 
               // Customer rating area for closed live support sessions
               if (session.isClosed && !isAgent) ...[

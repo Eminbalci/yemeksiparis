@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -5,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import '../models/models.dart';
 import '../services/firebase_service.dart';
 import '../services/location_api_service.dart';
+import '../services/notification_service.dart';
 import 'login_screen.dart';
 import 'customer_dashboard.dart';
 import 'live_support_screen.dart';
@@ -42,6 +44,10 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
   late final TextEditingController _profileDescCtrl;
   late final TextEditingController _profileMaxDistanceCtrl;
 
+  // Support notifications stream subscription
+  StreamSubscription<List<ChatSession>>? _chatSessionsSubscription;
+  final Set<String> _notifiedSessionIds = {};
+
   @override
   void initState() {
     super.initState();
@@ -54,10 +60,69 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
     _profileLogoCtrl = TextEditingController(text: user?.restaurantLogo ?? "");
     _profileDescCtrl = TextEditingController(text: user?.restaurantDescription ?? "");
     _profileMaxDistanceCtrl = TextEditingController(text: user?.maxDeliveryDistance.toStringAsFixed(1) ?? "5.0");
+
+    // Live support session stream for notifications
+    if (user != null && (user.role == 'support' || user.role == 'support_manager' || user.role == 'admin')) {
+      _chatSessionsSubscription = FirebaseService.streamChatSessions().listen((sessions) {
+        for (var s in sessions) {
+          if (s.isWaiting && (s.assignedAgentId == null || s.assignedAgentId!.isEmpty)) {
+            if (!_notifiedSessionIds.contains(s.id)) {
+              _notifiedSessionIds.add(s.id);
+              _showSupportNotification(s);
+              
+              // Trigger system background native notification!
+              NotificationService.showLocalNotification(
+                id: s.id.hashCode,
+                title: "Yeni Canlı Destek Talebi! 💬",
+                body: "${s.customerName} yardım bekliyor. Hemen yanıtlayın.",
+              ).catchError((e) => debugPrint('Local notification error: $e'));
+            }
+          }
+        }
+      });
+    }
+  }
+
+  Future<void> _handleRefresh() async {
+    await Future.delayed(const Duration(milliseconds: 600));
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  void _showSupportNotification(ChatSession session) {
+    if (!mounted) return;
+    final overlayState = Overlay.of(context);
+    late OverlayEntry overlayEntry;
+
+    overlayEntry = OverlayEntry(
+      builder: (context) {
+        return Positioned(
+          top: MediaQuery.of(context).padding.top + 16,
+          left: 16,
+          right: 16,
+          child: Material(
+            color: Colors.transparent,
+            child: _AnimatedSupportNotificationToast(
+              title: "Yeni Canlı Destek Talebi! 💬",
+              desc: "${session.customerName} yardım bekliyor. Hemen yanıtlayın.",
+              icon: Icons.chat_bubble_outline_rounded,
+              color: const Color(0xFF10B981),
+              onDismiss: () {
+                overlayEntry.remove();
+              },
+            ),
+          ),
+        );
+      },
+    );
+
+    overlayState.insert(overlayEntry);
   }
 
   @override
   void dispose() {
+    _chatSessionsSubscription?.cancel();
     _mealNameController.dispose();
     _mealDescController.dispose();
     _mealPriceController.dispose();
@@ -76,6 +141,7 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
 
   // Handle Sign Out
   Future<void> _handleSignOut() async {
+    CartManager.clear();
     await FirebaseService.signOut();
     if (mounted) {
       Navigator.of(context).pushAndRemoveUntil(
@@ -568,6 +634,7 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
     final theme = Theme.of(context);
     final bool isAdmin = FirebaseService.currentUser?.role == 'admin';
     final bool isSupport = FirebaseService.currentUser?.role == 'support';
+    final bool isSupportManager = FirebaseService.currentUser?.role == 'support_manager';
 
     return Scaffold(
       appBar: AppBar(
@@ -579,23 +646,64 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
             Text(
               isSupport
                   ? "Destek Yetkilisi Paneli"
-                  : (isAdmin ? "Yönetim Paneli" : "Restoran Paneli"),
+                  : (isSupportManager
+                      ? "Destek Yöneticisi Paneli"
+                      : (isAdmin ? "Yönetim Paneli" : "Restoran Paneli")),
               style: GoogleFonts.outfit(fontWeight: FontWeight.w900, letterSpacing: -0.5),
             ),
           ],
         ),
         actions: [
-          if (!isSupport)
-            IconButton(
-              icon: const Icon(Icons.restaurant_rounded, color: Colors.white70, size: 22),
-              tooltip: "Sipariş Paneli (Yemek Sipariş Et)",
-              onPressed: () {
-                Navigator.of(context).pushAndRemoveUntil(
-                  MaterialPageRoute(builder: (_) => const CustomerDashboard()),
-                  (route) => false,
-                );
-              },
-            ),
+          IconButton(
+            icon: const Icon(Icons.restaurant_rounded, color: Colors.white70, size: 22),
+            tooltip: "Sipariş Paneli (Yemek Sipariş Et)",
+            onPressed: () {
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const CustomerDashboard()),
+                (route) => false,
+              );
+            },
+          ),
+          Stack(
+            alignment: Alignment.center,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.shopping_cart_rounded, color: Colors.amber, size: 22),
+                tooltip: "Sepete Git",
+                onPressed: () {
+                  Navigator.of(context).pushAndRemoveUntil(
+                    MaterialPageRoute(builder: (_) => const CustomerDashboard(showCart: true)),
+                    (route) => false,
+                  );
+                },
+              ),
+              if (CartManager.itemCount > 0)
+                Positioned(
+                  right: 4,
+                  top: 4,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFEF4444),
+                      shape: BoxShape.circle,
+                    ),
+                    constraints: const BoxConstraints(
+                      minWidth: 16,
+                      minHeight: 16,
+                    ),
+                    child: Text(
+                      "${CartManager.itemCount}",
+                      style: GoogleFonts.outfit(
+                        color: Colors.white,
+                        fontSize: 9,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+            ],
+          ),
           IconButton(
             icon: const Icon(Icons.logout_rounded, color: Colors.white54, size: 22),
             tooltip: "Çıkış Yap",
@@ -629,12 +737,12 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
 
               final int activeOrders = orders.where((o) => o.status != 'delivered').length;
 
-              final isPendingApproval = !isAdmin && !isSupport && FirebaseService.currentUser?.status == 'pending_approval';
+              final isPendingApproval = !isAdmin && !isSupport && !isSupportManager && FirebaseService.currentUser?.status == 'pending_approval';
 
               Widget mainContent;
               if (isSupport) {
                 mainContent = _buildSupportQueueTab(theme);
-              } else if (isAdmin) {
+              } else if (isAdmin || isSupportManager) {
                 if (_currentTab == 0) {
                   mainContent = _buildSupportQueueTab(theme);
                 } else if (_currentTab == 1) {
@@ -737,7 +845,7 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
                 border: Border(top: BorderSide(color: Colors.white.withValues(alpha: 0.05))),
               ),
               child: BottomNavigationBar(
-                currentIndex: _currentTab >= (isAdmin ? 2 : 4) ? 0 : _currentTab,
+                currentIndex: _currentTab >= ((isAdmin || isSupportManager) ? 2 : 4) ? 0 : _currentTab,
                 onTap: (index) => setState(() => _currentTab = index),
                 backgroundColor: theme.scaffoldBackgroundColor,
                 selectedItemColor: theme.primaryColor,
@@ -747,7 +855,7 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
                 selectedLabelStyle: GoogleFonts.outfit(fontSize: 11, fontWeight: FontWeight.bold),
                 unselectedLabelStyle: GoogleFonts.outfit(fontSize: 11),
                 type: BottomNavigationBarType.fixed,
-                items: isAdmin
+                items: (isAdmin || isSupportManager)
                     ? const [
                         BottomNavigationBarItem(
                           icon: Icon(Icons.support_agent_outlined),
@@ -805,9 +913,13 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
       );
     }
 
-    return ListView.builder(
-      physics: const BouncingScrollPhysics(),
-      padding: const EdgeInsets.all(20),
+    return RefreshIndicator(
+      onRefresh: _handleRefresh,
+      color: theme.primaryColor,
+      backgroundColor: theme.cardColor,
+      child: ListView.builder(
+        physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+        padding: const EdgeInsets.all(20),
       itemCount: allOrders.length,
       itemBuilder: (context, index) {
         final order = allOrders[index];
@@ -966,8 +1078,9 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
           ),
         );
       },
-    );
-  }
+    ),
+  );
+}
 
   // Builder for Tab 2: Menu items inventory card management
   Widget _buildMenuTab(ThemeData theme, List<FoodItem> meals) {
@@ -1413,16 +1526,21 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
                         Expanded(
                           child: DropdownButtonFormField<String>(
                             initialValue: selectedRole,
+                            isExpanded: true,
                             dropdownColor: theme.cardColor,
                             decoration: const InputDecoration(
                               labelText: "Rol",
-                              prefixIcon: Icon(Icons.shield, size: 18, color: Colors.white54),
+                              prefixIcon: Icon(Icons.shield, size: 16, color: Colors.white54),
+                              contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                             ),
-                            items: const [
-                              DropdownMenuItem(value: 'customer', child: Text('Müşteri', style: TextStyle(color: Colors.white))),
-                              DropdownMenuItem(value: 'support', child: Text('Canlı Destek', style: TextStyle(color: Colors.white))),
-                              DropdownMenuItem(value: 'restaurant_owner', child: Text('Restoran', style: TextStyle(color: Colors.white))),
-                              DropdownMenuItem(value: 'admin', child: Text('Admin', style: TextStyle(color: Colors.white))),
+                            items: [
+                              const DropdownMenuItem(value: 'customer', child: Text('Müşteri', style: TextStyle(color: Colors.white, fontSize: 12))),
+                              const DropdownMenuItem(value: 'support', child: Text('Canlı Destek', style: TextStyle(color: Colors.white, fontSize: 12))),
+                              const DropdownMenuItem(value: 'support_manager', child: Text('Destek Yöneticisi', style: TextStyle(color: Colors.white, fontSize: 12))),
+                              if (FirebaseService.currentUser?.role == 'admin') ...[
+                                const DropdownMenuItem(value: 'restaurant_owner', child: Text('Restoran', style: TextStyle(color: Colors.white, fontSize: 12))),
+                                const DropdownMenuItem(value: 'admin', child: Text('Admin', style: TextStyle(color: Colors.white, fontSize: 12))),
+                              ]
                             ],
                             onChanged: (val) {
                               if (val != null) {
@@ -1431,19 +1549,21 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
                             },
                           ),
                         ),
-                        const SizedBox(width: 12),
+                        const SizedBox(width: 8),
                         Expanded(
                           child: DropdownButtonFormField<String>(
                             initialValue: selectedStatus,
+                            isExpanded: true,
                             dropdownColor: theme.cardColor,
                             decoration: const InputDecoration(
                               labelText: "Durum",
-                              prefixIcon: Icon(Icons.info_outline, size: 18, color: Colors.white54),
+                              prefixIcon: Icon(Icons.info_outline, size: 16, color: Colors.white54),
+                              contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                             ),
                             items: const [
-                              DropdownMenuItem(value: 'active', child: Text('Aktif', style: TextStyle(color: Colors.white))),
-                              DropdownMenuItem(value: 'suspended', child: Text('Askıda', style: TextStyle(color: Colors.white))),
-                              DropdownMenuItem(value: 'pending_approval', child: Text('Onay Bekliyor', style: TextStyle(color: Colors.white))),
+                              DropdownMenuItem(value: 'active', child: Text('Aktif', style: TextStyle(color: Colors.white, fontSize: 12))),
+                              DropdownMenuItem(value: 'suspended', child: Text('Askıda', style: TextStyle(color: Colors.white, fontSize: 12))),
+                              DropdownMenuItem(value: 'pending_approval', child: Text('Onay Bekle', style: TextStyle(color: Colors.white, fontSize: 12))),
                             ],
                             onChanged: (val) {
                               if (val != null) {
@@ -1880,19 +2000,23 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
                             final user = filteredUsers[index];
                             final String roleText = user.role == 'admin'
                                 ? 'Admin'
-                                : user.role == 'restaurant_owner'
-                                    ? 'Restoran Sahibi'
-                                    : user.role == 'support'
-                                        ? 'Canlı Destek'
-                                        : 'Müşteri';
+                                : user.role == 'support_manager'
+                                    ? 'Destek Yöneticisi'
+                                    : user.role == 'restaurant_owner'
+                                        ? 'Restoran Sahibi'
+                                        : user.role == 'support'
+                                            ? 'Canlı Destek'
+                                            : 'Müşteri';
                             
                             final Color roleColor = user.role == 'admin'
                                 ? const Color(0xFFEF4444)
-                                : user.role == 'restaurant_owner'
-                                    ? const Color(0xFF10B981)
-                                    : user.role == 'support'
-                                        ? const Color(0xFF3B82F6) // Blue for support
-                                        : Colors.white30;
+                                : user.role == 'support_manager'
+                                    ? const Color(0xFFA855F7) // Purple for support manager
+                                    : user.role == 'restaurant_owner'
+                                        ? const Color(0xFF10B981)
+                                        : user.role == 'support'
+                                            ? const Color(0xFF3B82F6) // Blue for support
+                                            : Colors.white30;
 
                             int closedTickets = 0;
                             double averageRating = 0.0;
@@ -3892,6 +4016,7 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
   // LIVE CHAT SUPPORT QUEUE TICKET DESK
   // ─────────────────────────────────────────
   Widget _buildSupportQueueTab(ThemeData theme) {
+    final bool isAdmin = FirebaseService.currentUser?.role == 'admin' || FirebaseService.currentUser?.role == 'support_manager';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -4005,95 +4130,149 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
                     statusText = "Görüşme Tamamlandı";
                   }
 
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: 14),
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: theme.cardColor,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Row(
-                          children: [
-                            Container(
-                              width: 8,
-                              height: 8,
-                              decoration: BoxDecoration(
-                                color: glowColor,
-                                shape: BoxShape.circle,
+                  return GestureDetector(
+                    onTap: s.status == 'closed'
+                        ? () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(builder: (_) => LiveSupportScreen(session: s)),
+                            );
+                          }
+                        : null,
+                    child: Container(
+                      margin: const EdgeInsets.only(bottom: 14),
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: theme.cardColor,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(
+                            children: [
+                              Container(
+                                width: 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  color: glowColor,
+                                  shape: BoxShape.circle,
+                                ),
                               ),
-                            ),
-                            const SizedBox(width: 8),
+                              const SizedBox(width: 8),
+                              Text(
+                                statusText,
+                                style: GoogleFonts.outfit(color: glowColor, fontWeight: FontWeight.bold, fontSize: 11),
+                              ),
+                              const Spacer(),
+                              Text(
+                                "${s.createdAt.hour.toString().padLeft(2, '0')}:${s.createdAt.minute.toString().padLeft(2, '0')}",
+                                style: GoogleFonts.outfit(fontSize: 10, color: Colors.white38),
+                              ),
+                              if (isAdmin && s.status == 'closed') ...[
+                                const SizedBox(width: 8),
+                                IconButton(
+                                  icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent, size: 16),
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                  tooltip: "Görüşmeyi Sil",
+                                  onPressed: () async {
+                                    final confirm = await showDialog<bool>(
+                                      context: context,
+                                      builder: (context) => AlertDialog(
+                                        backgroundColor: const Color(0xFF1E1E2C),
+                                        title: Text("Görüşmeyi Sil", style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.bold)),
+                                        content: Text("Bu destek görüşmesini kalıcı olarak silmek istediğinize emin misiniz?", style: GoogleFonts.outfit(color: Colors.white70)),
+                                        actions: [
+                                          TextButton(
+                                            onPressed: () => Navigator.pop(context, false),
+                                            child: Text("İptal", style: GoogleFonts.outfit(color: Colors.white38)),
+                                          ),
+                                          TextButton(
+                                            onPressed: () => Navigator.pop(context, true),
+                                            child: Text("Sil", style: GoogleFonts.outfit(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                    if (confirm == true) {
+                                      await FirebaseService.deleteChatSession(s.id);
+                                      if (context.mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(
+                                            content: Text("Destek görüşmesi başarıyla silindi.", style: GoogleFonts.outfit(fontWeight: FontWeight.bold)),
+                                            backgroundColor: Colors.greenAccent,
+                                            duration: const Duration(seconds: 2),
+                                          ),
+                                        );
+                                      }
+                                    }
+                                  },
+                                ),
+                              ],
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            s.customerName,
+                            style: GoogleFonts.outfit(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
+                          ),
+                          if (s.lastMessage.isNotEmpty) ...[
+                            const SizedBox(height: 4),
                             Text(
-                              statusText,
-                              style: GoogleFonts.outfit(color: glowColor, fontWeight: FontWeight.bold, fontSize: 11),
-                            ),
-                            const Spacer(),
-                            Text(
-                              "${s.createdAt.hour.toString().padLeft(2, '0')}:${s.createdAt.minute.toString().padLeft(2, '0')}",
-                              style: GoogleFonts.outfit(fontSize: 10, color: Colors.white38),
+                              s.lastMessage,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: GoogleFonts.outfit(fontSize: 12, color: Colors.white60),
                             ),
                           ],
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          s.customerName,
-                          style: GoogleFonts.outfit(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
-                        ),
-                        if (s.lastMessage.isNotEmpty) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            s.lastMessage,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: GoogleFonts.outfit(fontSize: 12, color: Colors.white60),
-                          ),
-                        ],
-                        if (s.status != 'closed') ...[
-                          const SizedBox(height: 16),
-                          ElevatedButton(
-                            onPressed: () async {
-                              if (s.status == 'waiting') {
-                                final err = await FirebaseService.claimChatSession(s.id);
-                                if (err != null) {
-                                  _showFeedbackDialog("Bağlantı Hatası", "Görüşme başka yetkili tarafından alındı.", isError: true);
-                                } else {
-                                  if (context.mounted) {
+                          if (s.status != 'closed') ...[
+                            const SizedBox(height: 16),
+                            ElevatedButton(
+                              onPressed: () async {
+                                if (s.status == 'waiting') {
+                                  final err = await FirebaseService.claimChatSession(s.id);
+                                  if (err != null) {
+                                    _showFeedbackDialog("Bağlantı Hatası", "Görüşme başka yetkili tarafından alındı.", isError: true);
+                                  } else {
+                                    if (context.mounted) {
+                                      Navigator.of(context).push(
+                                        MaterialPageRoute(builder: (_) => LiveSupportScreen(session: s)),
+                                      );
+                                    }
+                                  }
+                                } else if (s.status == 'active') {
+                                  if (isCurrentAgentClaimant || isAdmin) {
                                     Navigator.of(context).push(
                                       MaterialPageRoute(builder: (_) => LiveSupportScreen(session: s)),
                                     );
+                                  } else {
+                                    _showFeedbackDialog("Erişim Reddedildi", "Bu destek görüşmesini başka bir yetkili devraldı.", isError: true);
                                   }
                                 }
-                              } else if (s.status == 'active') {
-                                if (isCurrentAgentClaimant) {
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute(builder: (_) => LiveSupportScreen(session: s)),
-                                  );
-                                } else {
-                                  _showFeedbackDialog("Erişim Reddedildi", "Bu destek görüşmesini başka bir yetkili devraldı.", isError: true);
-                                }
-                              }
-                            },
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: s.status == 'waiting'
-                                  ? theme.primaryColor
-                                  : (isCurrentAgentClaimant ? Colors.greenAccent : Colors.grey.withValues(alpha: 0.2)),
-                              foregroundColor: s.status == 'waiting' ? Colors.black : Colors.white,
-                              minimumSize: const Size(double.infinity, 42),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: s.status == 'waiting'
+                                    ? theme.primaryColor
+                                    : (isCurrentAgentClaimant
+                                        ? Colors.greenAccent
+                                        : (isAdmin ? const Color(0xFF3B82F6) : Colors.grey.withValues(alpha: 0.2))),
+                                foregroundColor: s.status == 'waiting' ? Colors.black : Colors.white,
+                                minimumSize: const Size(double.infinity, 42),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
+                              child: Text(
+                                s.status == 'waiting'
+                                    ? "Görüşmeyi Başlat"
+                                    : (isCurrentAgentClaimant
+                                        ? "Görüşmeye Geri Dön"
+                                        : (isAdmin ? "Görüşmeyi İncele / Katıl" : "Başka Yetkili İlgileniyor")),
+                                style: GoogleFonts.outfit(fontWeight: FontWeight.bold, fontSize: 12, color: s.status == 'waiting' ? Colors.black : Colors.white),
+                              ),
                             ),
-                            child: Text(
-                              s.status == 'waiting'
-                                  ? "Görüşmeyi Başlat"
-                                  : (isCurrentAgentClaimant ? "Görüşmeye Geri Dön" : "Başka Yetkili İlgileniyor"),
-                              style: GoogleFonts.outfit(fontWeight: FontWeight.bold, fontSize: 12, color: s.status == 'waiting' ? Colors.black : Colors.white),
-                            ),
-                          ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
                   );
                 },
@@ -4312,4 +4491,118 @@ class RevenueLinePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _AnimatedSupportNotificationToast extends StatefulWidget {
+  final String title;
+  final String desc;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onDismiss;
+
+  const _AnimatedSupportNotificationToast({
+    required this.title,
+    required this.desc,
+    required this.icon,
+    required this.color,
+    required this.onDismiss,
+  });
+
+  @override
+  State<_AnimatedSupportNotificationToast> createState() => _AnimatedSupportNotificationToastState();
+}
+
+class _AnimatedSupportNotificationToastState extends State<_AnimatedSupportNotificationToast> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<Offset> _offsetAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 400),
+    );
+    _offsetAnimation = Tween<Offset>(
+      begin: const Offset(0, -1.5),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutBack));
+
+    _controller.forward();
+
+    // Auto-dismiss after 6 seconds
+    Future.delayed(const Duration(seconds: 6), () {
+      if (mounted) {
+        _controller.reverse().then((_) {
+          widget.onDismiss();
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SlideTransition(
+      position: _offsetAnimation,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1C1C1E),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: widget.color.withValues(alpha: 0.3)),
+          boxShadow: [
+            BoxShadow(
+              color: widget.color.withValues(alpha: 0.15),
+              blurRadius: 20,
+              offset: const Offset(0, 10),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: widget.color.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(widget.icon, color: widget.color, size: 24),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.title,
+                    style: GoogleFonts.outfit(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    widget.desc,
+                    style: GoogleFonts.outfit(fontSize: 12, color: Colors.white70),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.close, color: Colors.white30, size: 18),
+              onPressed: () {
+                _controller.reverse().then((_) {
+                  widget.onDismiss();
+                });
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

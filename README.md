@@ -6,28 +6,40 @@ BalSipariş, modern yemek siparişi süreçlerini, gelişmiş restoran şube yö
 
 ## ✨ Uygulama Özellikleri
 
-### 1. 📍 Gelişmiş Adres ve Konum Yönetimi
-*   **Müşteri ve Restoran Adres Girişi**: Müşteriler ve restoranlar aynı gelişmiş konum girme arayüzünü kullanır. 
-*   **Harita ve Konum Entegrasyonu**: Harita üzerinden pin kaydırarak veya arama barından adres aratarak anında konum tespiti yapılır.
-*   **Adres Onaylama Akışı**: Adres girilip onaylandıktan sonra ekran yenilenmeden form bilgileri korunur, böylece kullanıcılar verilerini kaybetmeden adres kaydını tamamlar.
+### 1. 🏪 Restoran Odaklı Keşif ve Özel Menü Sayfaları (Yeni!)
+*   **Restoran-Öncelikli Listeleme**: Kategorilerde veya arama çubuğunda artık doğrudan yemekler yerine **Aktif Restoranlar** listelenir. Böylece kullanıcılar öncelikle yakınlarındaki restoran şubelerini keşfederler.
+*   **Ayrıntılı Restoran Menü Ekranı (`RestaurantDetailScreen`)**: Her restoranın kendine ait, göz alıcı bir menü sayfası bulunur. Bu ekran içerisinde o restorana ait yemekler aranabilir, alt kategorilere göre filtrelenebilir ve sepet işlemleri yönetilebilir.
+*   **Akıllı Mesafe ve Teslimat Hesaplama**: Kullanıcı adresi ile restoran adresi arasındaki WGS84 koordinat mesafesi hesaplanarak teslimat uygunluğu anlık denetlenir.
 
-### 2. 🏪 Restoran Paneli ve Ciro Yönetimi
-*   **Restoran Sahiplerine Özel Erişim**: Restoran sahipleri doğrudan yönetim paneline değil, kendilerine özel olarak tasarlanmış **Restoran Şube Paneline** yönlendirilir.
+### 2. 📍 Gel-Al (Takeaway) Siparişlerinde Google Maps Yol Tarifi
+*   **Entegre Harita Paneli**: Gel-Al (Takeaway) siparişlerin detaylarında, restoranın fiziksel adresi ve adı şık bir harita kartı şeklinde listelenir.
+*   **Canlı Google Haritalar Yönlendirmesi**: "Yol Tarifi" butonuna basıldığında, `url_launcher` vasıtasıyla yerel cihazdaki **Google Haritalar (Google Maps)** uygulaması otomatik açılarak restorana giden en hızlı rota çizilir.
+
+### 3. 🛍️ Tek Restorandan Sipariş (Sepet Kısıtlaması)
+*   **Sepet Güvenliği Algoritması**: Kullanıcının aynı anda yalnızca tek bir restorandan sipariş vermesi garanti altına alınır.
+*   **Şık Boşaltma Uyarısı**: Sepette ürün varken farklı bir restorandan ürün eklenmek istendiğinde, kullanıcıyı karşılayan estetik bir uyarı penceresi yardımıyla sepet tek tuşla boşaltılarak yeni sipariş akışı başlatılabilir.
+
+### 4. 🔔 Çift Kanallı Sipariş ve Canlı Destek Bildirimleri
+*   **Anlık Yerel Bildirimler (`flutter_local_notifications`)**: Siparişlerin durum güncellemeleri (Hazırlanıyor 🍳, Yolda 🛵, Teslim Edildi 🎉 vb.) hem uygulama içi cam efektli kayar bildirim panelleriyle hem de cihaz kapalıyken bile çalışan **Sistem Bildirimleri** ile kullanıcıya ulaştırılır.
+*   **Canlı Destek Arka Plan Servisi (`workmanager`)**: Canlı destek personelleri için arka planda çalışan iş parçacığı yönetimi ile uygulama kapalıyken dahi yeni biletler sorgulanır ve bildirim tetiklenir.
+
+### 5. 🔄 Tüm Sayfalarda Dokunmatik Yenileme (Pull-to-Refresh)
+*   **Tüm Sayfalarda Canlı Veri Yenileme**: Kullanıcı panelindeki tüm kritik sayfalar (Keşif/Restoran Listesi, Siparişlerim Geçmişi ve Profil Bilgileri) `RefreshIndicator` ile donatılmıştır. Sayfayı aşağı çekmek verileri anında tazeleyerek pürüzsüz bir deneyim sağlar.
+
+### 6. 🏪 Restoran Paneli ve Ciro Yönetimi
+*   **Restoran Sahiplerine Özel Erişim**: Restoran sahipleri kendilerine ait şık **Restoran Şube Paneline** erişerek menülerini, kuponlarını ve şubelerini yönetirler.
 *   **%80 Ciro Hesaplaması**: Restoran sahiplerinin panelinde gösterilen toplam ciro, sipariş tutarlarının net **%80'i** olacak şekilde hesaplanır. Kalan %20 platform işletim bedeli olarak ayrılır.
 *   **Logo Yükleme**: Restoran sahipleri galeriden veya kameradan restoran logolarını fotoğraf olarak yükleyebilirler.
-*   **Maksimum Sipariş Uzaklığı**: Restoranlar, şubeleri için kilometre (km) bazında maksimum sipariş teslimat uzaklığı belirleyebilirler.
 
-### 3. 👥 Şube Yetkilisi Davet Sistemi
-*   **E-Posta ile Davet**: Restoran sahipleri, normal müşterileri restoranlarına "Şube Yetkilisi" (Ortak Yönetici) olarak atamak için sadece e-posta adreslerini girerek davet gönderebilir.
-*   **Canlı Profil Bildirimleri**: Davet gönderilen müşterinin Profil sayfasına anında cam efektli (glassmorphic) şık bir davet bildirimi düşer.
-*   **Onay ve Rol Güncellemesi**: Müşteri daveti kabul ettiğinde rolü anında `'restaurant_owner'` olarak güncellenir ve davet eden restoranın tüm şube yönetim verilerine ortak erişim kazanır.
+### 7. 👥 Şube Yetkilisi Davet Sistemi
+*   **E-Posta ile Davet**: Restoran sahipleri, normal müşterileri restoranlarına "Şube Yetkilisi" olarak atamak için sadece e-posta adreslerini girerek davet gönderebilir.
+*   **Onay ve Rol Güncellemesi**: Müşteri daveti kabul ettiğinde rolü anında `'restaurant_owner'` olarak güncellenir ve davet eden restoranın tüm verilerine ortak erişim kazanır.
 
-### 4. 💬 Canlı Destek & Kullanıcı Arama Sistemi (Admin)
-*   **Destek Personeli Atama**: Sistem yöneticileri (Admin), yönetim panelinden istedikleri kullanıcıları tek dokunuşla "Canlı Destek Personeli" olarak atayabilir veya görevden alabilir.
-*   **Kullanıcı Arama Barı**: Admin panelinin üst kısmında yer alan akıllı arama barı ile kullanıcılar isme veya e-postaya göre anlık olarak filtrelenir.
-*   **Gerçek Zamanlı Sohbet**: Müşteriler ve atanan canlı destek personelleri arasında siparişle ilişkili veya bağımsız anlık mesajlaşma odaları bulunur.
+### 8. 👑 Gelişmiş Kullanıcı ve Yönetici Rolleri (Admin & Support Manager)
+*   **Sistem Yöneticisi (Admin)**: Kullanıcıları destek personeli olarak atayabilir, geçmiş sohbetleri kalıcı olarak silebilir ve tüm sistemi yönetebilir.
+*   **Destek Yöneticisi (Support Manager)**: Canlı destek personellerini atayabilir ve bekleyen yeni restoran onay başvurularını denetleyebilir.
 
-### 5. 🏷️ Akıllı Kupon & İndirim Yönetimi
+### 9. 🏷️ Akıllı Kupon & İndirim Yönetimi
 *   Restoranlar; kupon kodu, indirim türü (yüzde veya sabit tutar), minimum sepet tutarı, maksimum kullanım limiti ve aktiflik durumunu belirleyerek gelişmiş indirim kuponları tanımlayabilirler.
 
 ---
@@ -49,6 +61,7 @@ Uygulamayı farklı rollerle test etmek için aşağıdaki hazır e-posta adresl
 | Rol | E-Posta | Şifre | Açıklama |
 | :--- | :--- | :--- | :--- |
 | **Sistem Yöneticisi (Admin)** | `admin@yemek.com` | `password` | Kullanıcıları destek personeli atayabilir, tüm sistemi yönetebilir. |
+| **Destek Yöneticisi (Support Manager)** | `yonetici@yemek.com` | `password` | Canlı destek personellerini ve restoran onaylarını yönetebilir. |
 | **Restoran Sahibi** | `mahmut@yemek.com` | `password` | Şube yönetimi, kupon tanımlama, yetkili davet etme ve ciro takibi yapabilir. |
 | **Destek Personeli** | `destek@yemek.com` | `password` | Canlı destek taleplerini yanıtlayabilir, sohbetleri yönetebilir. |
 | **Normal Müşteri** | `musteri@yemek.com` | `password` | Sipariş verebilir, destek talebi açabilir, yetkililik davetlerini kabul edebilir. |
@@ -90,7 +103,7 @@ Uygulamanın canlı modda kullandığı koleksiyonlar ve alanları aşağıda be
   "fullName": "String",
   "phone": "String",
   "address": "String",
-  "role": "String (customer | restaurant_owner | support | admin)",
+  "role": "String (customer | restaurant_owner | support | support_manager | admin)",
   "restaurantName": "String",
   "restaurantAddress": "String"
 }
