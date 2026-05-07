@@ -1,6 +1,12 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import '../screens/customer_dashboard.dart';
+import '../screens/restaurant_dashboard.dart';
+import 'firebase_service.dart';
 
 class NotificationService {
+  static final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
   static final FlutterLocalNotificationsPlugin _notificationsPlugin =
       FlutterLocalNotificationsPlugin();
 
@@ -23,9 +29,49 @@ class NotificationService {
     await _notificationsPlugin.initialize(
       settings: initSettings,
       onDidReceiveNotificationResponse: (NotificationResponse response) {
-        // Handlers can be added here if background notification clicks need to route to specific screens
+        final payload = response.payload;
+        if (payload != null && payload.isNotEmpty) {
+          _handleNotificationClick(payload);
+        }
       },
     );
+
+    // Prompt user for notification permissions on Android 13+ at launch
+    await _notificationsPlugin
+        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+        ?.requestNotificationsPermission();
+  }
+
+  /// Handle user clicking on a system notification
+  static void _handleNotificationClick(String payload) {
+    if (payload == 'orders') {
+      // Navigate to CustomerDashboard with the orders tab (tab 1) selected
+      navigatorKey.currentState?.pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (_) => const CustomerDashboard(initialTab: 1),
+        ),
+        (route) => false,
+      );
+    } else if (payload == 'support') {
+      final role = FirebaseService.currentUser?.role;
+      if (role == 'admin' || role == 'support_manager' || role == 'support') {
+        // Support staff or admins should be navigated to their support queue console inside RestaurantDashboard!
+        navigatorKey.currentState?.pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (_) => const RestaurantDashboard(initialTab: 0),
+          ),
+          (route) => false,
+        );
+      } else {
+        // Customer should be navigated to CustomerDashboard with profile/support selected
+        navigatorKey.currentState?.pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (_) => const CustomerDashboard(initialTab: 2),
+          ),
+          (route) => false,
+        );
+      }
+    }
   }
 
   /// Trigger a system-level background local notification
@@ -33,6 +79,7 @@ class NotificationService {
     required int id,
     required String title,
     required String body,
+    String? payload,
   }) async {
     const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
       'support_channel_id',
@@ -59,6 +106,7 @@ class NotificationService {
       title: title,
       body: body,
       notificationDetails: notificationDetails,
+      payload: payload,
     );
   }
 }

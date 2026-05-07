@@ -34,14 +34,15 @@ class CartManager {
 
 class CustomerDashboard extends StatefulWidget {
   final bool showCart;
-  const CustomerDashboard({super.key, this.showCart = false});
+  final int initialTab;
+  const CustomerDashboard({super.key, this.showCart = false, this.initialTab = 0});
 
   @override
   State<CustomerDashboard> createState() => _CustomerDashboardState();
 }
 
 class _CustomerDashboardState extends State<CustomerDashboard> {
-  int _currentTab = 0; // 0: Menu, 1: Orders
+  late int _currentTab; // 0: Menu, 1: Orders
   String _searchQuery = "";
   String _selectedCategory = "Hepsi";
 
@@ -55,6 +56,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
   @override
   void initState() {
     super.initState();
+    _currentTab = widget.initialTab;
     _ordersSubscription = FirebaseService.streamOrders().listen((orders) {
       final customerId = FirebaseService.currentUser?.uid;
       if (customerId == null) return;
@@ -138,6 +140,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
       id: order.id.hashCode,
       title: statusTitle,
       body: statusDesc,
+      payload: 'orders',
     ).catchError((e) => debugPrint('Local notification error: $e'));
 
     overlayEntry = OverlayEntry(

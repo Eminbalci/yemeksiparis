@@ -12,14 +12,15 @@ import 'customer_dashboard.dart';
 import 'live_support_screen.dart';
 
 class RestaurantDashboard extends StatefulWidget {
-  const RestaurantDashboard({super.key});
+  final int initialTab;
+  const RestaurantDashboard({super.key, this.initialTab = 0});
 
   @override
   State<RestaurantDashboard> createState() => _RestaurantDashboardState();
 }
 
 class _RestaurantDashboardState extends State<RestaurantDashboard> {
-  int _currentTab = 0;
+  late int _currentTab;
   int _managementSubTab = 0;   // 0: Şubeler, 1: İndirim Kodları, 2: Kategoriler
   int _supportQueueSubTab = 0; // 0: Aktif Sohbetler, 1: Geçmiş
   int _adminSuiteSubTab = 0;   // 0: Performans Analizi, 1: Yetki Kontrolleri
@@ -51,6 +52,7 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
   @override
   void initState() {
     super.initState();
+    _currentTab = widget.initialTab;
     final user = FirebaseService.currentUser;
     _profileNameCtrl = TextEditingController(text: user?.fullName ?? "");
     _profileRestNameCtrl = TextEditingController(text: user?.restaurantName ?? "");
@@ -75,6 +77,7 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
                 id: s.id.hashCode,
                 title: "Yeni Canlı Destek Talebi! 💬",
                 body: "${s.customerName} yardım bekliyor. Hemen yanıtlayın.",
+                payload: 'support',
               ).catchError((e) => debugPrint('Local notification error: $e'));
             }
           }
@@ -664,46 +667,47 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
               );
             },
           ),
-          Stack(
-            alignment: Alignment.center,
-            children: [
-              IconButton(
-                icon: const Icon(Icons.shopping_cart_rounded, color: Colors.amber, size: 22),
-                tooltip: "Sepete Git",
-                onPressed: () {
-                  Navigator.of(context).pushAndRemoveUntil(
-                    MaterialPageRoute(builder: (_) => const CustomerDashboard(showCart: true)),
-                    (route) => false,
-                  );
-                },
-              ),
-              if (CartManager.itemCount > 0)
-                Positioned(
-                  right: 4,
-                  top: 4,
-                  child: Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFEF4444),
-                      shape: BoxShape.circle,
-                    ),
-                    constraints: const BoxConstraints(
-                      minWidth: 16,
-                      minHeight: 16,
-                    ),
-                    child: Text(
-                      "${CartManager.itemCount}",
-                      style: GoogleFonts.outfit(
-                        color: Colors.white,
-                        fontSize: 9,
-                        fontWeight: FontWeight.bold,
+          if (!isAdmin && !isSupport && !isSupportManager)
+            Stack(
+              alignment: Alignment.center,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.shopping_cart_rounded, color: Colors.amber, size: 22),
+                  tooltip: "Sepete Git",
+                  onPressed: () {
+                    Navigator.of(context).pushAndRemoveUntil(
+                      MaterialPageRoute(builder: (_) => const CustomerDashboard(showCart: true)),
+                      (route) => false,
+                    );
+                  },
+                ),
+                if (CartManager.itemCount > 0)
+                  Positioned(
+                    right: 4,
+                    top: 4,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: const BoxDecoration(
+                        color: Color(0xFFEF4444),
+                        shape: BoxShape.circle,
                       ),
-                      textAlign: TextAlign.center,
+                      constraints: const BoxConstraints(
+                        minWidth: 16,
+                        minHeight: 16,
+                      ),
+                      child: Text(
+                        "${CartManager.itemCount}",
+                        style: GoogleFonts.outfit(
+                          color: Colors.white,
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
                     ),
                   ),
-                ),
-            ],
-          ),
+              ],
+            ),
           IconButton(
             icon: const Icon(Icons.logout_rounded, color: Colors.white54, size: 22),
             tooltip: "Çıkış Yap",
@@ -1540,6 +1544,11 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
                               if (FirebaseService.currentUser?.role == 'admin') ...[
                                 const DropdownMenuItem(value: 'restaurant_owner', child: Text('Restoran', style: TextStyle(color: Colors.white, fontSize: 12))),
                                 const DropdownMenuItem(value: 'admin', child: Text('Admin', style: TextStyle(color: Colors.white, fontSize: 12))),
+                              ] else ...[
+                                if (selectedRole == 'restaurant_owner')
+                                  const DropdownMenuItem(value: 'restaurant_owner', enabled: false, child: Text('Restoran (Yetkiniz Yok)', style: TextStyle(color: Colors.white38, fontSize: 12))),
+                                if (selectedRole == 'admin')
+                                  const DropdownMenuItem(value: 'admin', enabled: false, child: Text('Admin (Yetkiniz Yok)', style: TextStyle(color: Colors.white38, fontSize: 12))),
                               ]
                             ],
                             onChanged: (val) {
@@ -1919,8 +1928,15 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
         final users = snapshot.data ?? [];
         final currentUserUid = FirebaseService.currentUser?.uid;
 
-        // Filter out current user from being updated by themselves to prevent accidental lockouts
-        final otherUsers = users.where((u) => u.uid != currentUserUid).toList();
+        // Filter out current user to prevent accidental self-lockouts, and apply role visibility filters
+        final otherUsers = users.where((u) {
+          if (u.uid == currentUserUid) return false;
+          // Support Manager can only see and manage customers, support agents, and other support managers
+          if (FirebaseService.currentUser?.role == 'support_manager') {
+            return u.role == 'customer' || u.role == 'support' || u.role == 'support_manager';
+          }
+          return true;
+        }).toList();
 
         // Apply Search Filter
         final filteredUsers = otherUsers.where((u) {
@@ -2158,48 +2174,63 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
                                           }
                                         }
                                       },
-                                      itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
-                                        PopupMenuItem<String>(
-                                          value: 'customer',
-                                          child: Row(
-                                            children: [
-                                              const Icon(Icons.person_outline, size: 18, color: Colors.white54),
-                                              const SizedBox(width: 10),
-                                              Text("Müşteri Yap", style: GoogleFonts.outfit(color: Colors.white70)),
-                                            ],
+                                      itemBuilder: (BuildContext context) {
+                                        final isCurrentUserAdmin = FirebaseService.currentUser?.role == 'admin';
+                                        return <PopupMenuEntry<String>>[
+                                          PopupMenuItem<String>(
+                                            value: 'customer',
+                                            child: Row(
+                                              children: [
+                                                const Icon(Icons.person_outline, size: 18, color: Colors.white54),
+                                                const SizedBox(width: 10),
+                                                Text("Müşteri Yap", style: GoogleFonts.outfit(color: Colors.white70)),
+                                              ],
+                                            ),
                                           ),
-                                        ),
-                                        PopupMenuItem<String>(
-                                          value: 'support',
-                                          child: Row(
-                                            children: [
-                                              const Icon(Icons.headset_mic_rounded, size: 18, color: Color(0xFF3B82F6)),
-                                              const SizedBox(width: 10),
-                                              Text("Canlı Destek Personeli Yap", style: GoogleFonts.outfit(color: Colors.white70)),
-                                            ],
+                                          PopupMenuItem<String>(
+                                            value: 'support',
+                                            child: Row(
+                                              children: [
+                                                const Icon(Icons.headset_mic_rounded, size: 18, color: Color(0xFF3B82F6)),
+                                                const SizedBox(width: 10),
+                                                Text("Canlı Destek Personeli Yap", style: GoogleFonts.outfit(color: Colors.white70)),
+                                              ],
+                                            ),
                                           ),
-                                        ),
-                                        PopupMenuItem<String>(
-                                          value: 'restaurant_owner',
-                                          child: Row(
-                                            children: [
-                                              const Icon(Icons.restaurant_menu, size: 18, color: Color(0xFF10B981)),
-                                              const SizedBox(width: 10),
-                                              Text("Restoran Sahibi Yap", style: GoogleFonts.outfit(color: Colors.white70)),
-                                            ],
+                                          PopupMenuItem<String>(
+                                            value: 'support_manager',
+                                            child: Row(
+                                              children: [
+                                                const Icon(Icons.manage_accounts_rounded, size: 18, color: Color(0xFFA855F7)),
+                                                const SizedBox(width: 10),
+                                                Text("Destek Yöneticisi Yap", style: GoogleFonts.outfit(color: Colors.white70)),
+                                              ],
+                                            ),
                                           ),
-                                        ),
-                                        PopupMenuItem<String>(
-                                          value: 'admin',
-                                          child: Row(
-                                            children: [
-                                              const Icon(Icons.admin_panel_settings, size: 18, color: Color(0xFFEF4444)),
-                                              const SizedBox(width: 10),
-                                              Text("Yönetici (Admin) Yap", style: GoogleFonts.outfit(color: Colors.white70)),
-                                            ],
-                                          ),
-                                        ),
-                                      ],
+                                          if (isCurrentUserAdmin) ...[
+                                            PopupMenuItem<String>(
+                                              value: 'restaurant_owner',
+                                              child: Row(
+                                                children: [
+                                                  const Icon(Icons.restaurant_menu, size: 18, color: Color(0xFF10B981)),
+                                                  const SizedBox(width: 10),
+                                                  Text("Restoran Sahibi Yap", style: GoogleFonts.outfit(color: Colors.white70)),
+                                                ],
+                                              ),
+                                            ),
+                                            PopupMenuItem<String>(
+                                              value: 'admin',
+                                              child: Row(
+                                                children: [
+                                                  const Icon(Icons.admin_panel_settings, size: 18, color: Color(0xFFEF4444)),
+                                                  const SizedBox(width: 10),
+                                                  Text("Yönetici (Admin) Yap", style: GoogleFonts.outfit(color: Colors.white70)),
+                                                ],
+                                              ),
+                                            ),
+                                          ],
+                                        ];
+                                      },
                                     ),
                                   ],
                                 ),

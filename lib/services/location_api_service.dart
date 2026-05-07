@@ -12,6 +12,8 @@ class Province {
   factory Province.fromJson(Map<String, dynamic> json) {
     final districtsList = json['districts'] as List? ?? [];
     final parsedDistricts = districtsList.map((d) => District.fromJson(d)).toList();
+    // Sort districts alphabetically with Turkish sensitivity
+    parsedDistricts.sort((a, b) => LocationApiService.compareTurkish(a.name, b.name));
     return Province(
       id: json['id'] ?? 0,
       name: json['name'] ?? '',
@@ -51,6 +53,44 @@ class Neighborhood {
 class LocationApiService {
   static const String _baseUrl = 'https://api.turkiyeapi.dev/v1';
 
+  /// Compares two strings using Turkish alphabetic rules (handles lowercase/uppercase and accents correctly)
+  static int compareTurkish(String s1, String s2) {
+    const turkishOrder = "aâbcçdefgğhıiiîjklmnoöp_rsştuüvyz";
+
+    // Turkish specific lowercasing ('I' -> 'ı', 'İ' -> 'i')
+    String turkishToLower(String s) {
+      return s
+          .replaceAll('I', 'ı')
+          .replaceAll('İ', 'i')
+          .replaceAll('Ç', 'ç')
+          .replaceAll('Ğ', 'ğ')
+          .replaceAll('Ö', 'ö')
+          .replaceAll('Ş', 'ş')
+          .replaceAll('Ü', 'ü')
+          .toLowerCase();
+    }
+
+    final str1 = turkishToLower(s1);
+    final str2 = turkishToLower(s2);
+
+    final len = str1.length < str2.length ? str1.length : str2.length;
+    for (int i = 0; i < len; i++) {
+      final char1 = str1[i];
+      final char2 = str2[i];
+
+      if (char1 != char2) {
+        final index1 = turkishOrder.indexOf(char1);
+        final index2 = turkishOrder.indexOf(char2);
+
+        if (index1 != -1 && index2 != -1) {
+          return index1.compareTo(index2);
+        }
+        return char1.compareTo(char2);
+      }
+    }
+    return str1.length.compareTo(str2.length);
+  }
+
   // Memory cache to prevent redundant API calls
   static List<Province>? _cachedProvinces;
   static final Map<int, List<Neighborhood>> _cachedNeighborhoods = {};
@@ -76,8 +116,8 @@ class LocationApiService {
         if (decoded['status'] == 'OK' && decoded['data'] != null) {
           final list = decoded['data'] as List;
           final provinces = list.map((item) => Province.fromJson(item)).toList();
-          // Sort alphabetically
-          provinces.sort((a, b) => a.name.compareTo(b.name));
+          // Sort alphabetically using Turkish rules
+          provinces.sort((a, b) => LocationApiService.compareTurkish(a.name, b.name));
           _cachedProvinces = provinces;
           return provinces;
         }
@@ -107,7 +147,7 @@ class LocationApiService {
         if (decoded['status'] == 'OK' && decoded['data'] != null) {
           final list = decoded['data'] as List;
           final neighborhoods = list.map((item) => Neighborhood.fromJson(item)).toList();
-          neighborhoods.sort((a, b) => a.name.compareTo(b.name));
+          neighborhoods.sort((a, b) => LocationApiService.compareTurkish(a.name, b.name));
           _cachedNeighborhoods[districtId] = neighborhoods;
           return neighborhoods;
         }

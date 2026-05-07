@@ -1203,6 +1203,19 @@ class FirebaseService {
 
   static final List<ChatSession> _mockChatSessions = MockData.getInitialChatSessions();
 
+  static Future<void> _persistMockChatSessionsToSharedPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final waitingChatsJson = _mockChatSessions
+          .where((s) => s.isWaiting)
+          .map((s) => '${s.id}||${s.customerName}')
+          .toList();
+      await prefs.setStringList('mock_waiting_chats', waitingChatsJson);
+    } catch (e) {
+      debugPrint('Error persisting mock chats: $e');
+    }
+  }
+
   /// Customer: open a new support session (or return existing open one) associated with a specific order
   static Future<ChatSession?> startChatSession([String? orderId]) async {
     final user = currentUser;
@@ -1260,6 +1273,7 @@ class FirebaseService {
       );
       _mockChatSessions.add(session);
       _chatSessionsController.add(List.from(_mockChatSessions));
+      await _persistMockChatSessionsToSharedPrefs();
       return session;
     }
   }
@@ -1440,6 +1454,7 @@ class FirebaseService {
         _mockChatSessions[idx].status = 'closed';
         _chatSessionsController.add(List.from(_mockChatSessions));
         _chatRoomControllers[sessionId]?.add(_mockChatSessions[idx]);
+        await _persistMockChatSessionsToSharedPrefs();
       }
     }
   }
@@ -1451,6 +1466,7 @@ class FirebaseService {
     } else {
       _mockChatSessions.removeWhere((s) => s.id == sessionId);
       _chatSessionsController.add(List.from(_mockChatSessions));
+      await _persistMockChatSessionsToSharedPrefs();
     }
   }
 
@@ -1678,60 +1694,90 @@ class FirebaseService {
 
   /// Check and trigger background notifications for support staff when app is closed/terminated
   static Future<void> checkBackgroundNotifications() async {
-    if (!useDemoMode) {
-      try {
-        if (Firebase.apps.isEmpty) {
-          await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+    final prefs = await SharedPreferences.getInstance();
+    final notifiedIds = prefs.getStringList('bg_notified_chats') ?? [];
+    final newNotifiedIds = List<String>.from(notifiedIds);
+    bool hasTriggered = false;
+
+    // 1. Try Live Firestore Check first
+    try {
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+      }
+
+      final query = await FirebaseFirestore.instance
+          .collection('support_chats')
+          .where('status', isEqualTo: 'waiting')
+          .get();
+
+      for (var doc in query.docs) {
+        final chatId = doc.id;
+        final customerName = doc.data()['customerName'] ?? 'Müşteri';
+
+        if (!notifiedIds.contains(chatId)) {
+          newNotifiedIds.add(chatId);
+          hasTriggered = true;
+
+          await NotificationService.showLocalNotification(
+            id: chatId.hashCode,
+            title: "Yeni Canlı Destek Talebi! 💬",
+            body: "$customerName yardım bekliyor. Hemen yanıtlayın.",
+            payload: 'support',
+          );
         }
-        
-        final query = await FirebaseFirestore.instance
-            .collection('support_chats')
-            .where('status', isEqualTo: 'waiting')
-            .get();
-            
-        final prefs = await SharedPreferences.getInstance();
-        final notifiedIds = prefs.getStringList('bg_notified_chats') ?? [];
-        final newNotifiedIds = List<String>.from(notifiedIds);
-        
-        for (var doc in query.docs) {
-          final chatId = doc.id;
-          final customerName = doc.data()['customerName'] ?? 'Müşteri';
-          
+      }
+
+      if (hasTriggered) {
+        await prefs.setStringList('bg_notified_chats', newNotifiedIds);
+      }
+      return; // Successfully finished Cloud check, no need for offline fallback
+    } catch (e) {
+      debugPrint('Background notification live check failed ($e), checking offline/demo disk-persisted chats.');
+    }
+
+    // 2. Offline / Demo Mode fallback check using persisted mock chats from SharedPreferences
+    try {
+      final mockWaitingChats = prefs.getStringList('mock_waiting_chats') ?? [];
+      
+      for (var chatStr in mockWaitingChats) {
+        final parts = chatStr.split('||');
+        if (parts.length == 2) {
+          final chatId = parts[0];
+          final customerName = parts[1];
+
           if (!notifiedIds.contains(chatId)) {
             newNotifiedIds.add(chatId);
-            
+            hasTriggered = true;
+
             await NotificationService.showLocalNotification(
               id: chatId.hashCode,
-              title: "Yeni Canlı Destek Talebi! 💬",
+              title: "Yeni Canlı Destek Talebi! 💬 (Demo)",
               body: "$customerName yardım bekliyor. Hemen yanıtlayın.",
+              payload: 'support',
             );
           }
         }
-        
-        await prefs.setStringList('bg_notified_chats', newNotifiedIds);
-      } catch (e) {
-        debugPrint('Background notification check error: $e');
       }
-    } else {
-      // Offline Demo Mode check: Simulate a random demo chat sometimes to prove background task works flawlessly!
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        final notifiedIds = prefs.getStringList('bg_notified_chats') ?? [];
-        
+
+      // If no custom mock chats are pending, trigger standard demo chat on first launch as a fallback
+      if (mockWaitingChats.isEmpty && !notifiedIds.contains('demo_bg_ticket_1')) {
         const demoChatId = 'demo_bg_ticket_1';
-        if (!notifiedIds.contains(demoChatId)) {
-          final newNotifiedIds = List<String>.from(notifiedIds)..add(demoChatId);
-          await prefs.setStringList('bg_notified_chats', newNotifiedIds);
-          
-          await NotificationService.showLocalNotification(
-            id: demoChatId.hashCode,
-            title: "Yeni Canlı Destek Talebi! 💬 (Demo)",
-            body: "Ayşe Yılmaz yardım bekliyor. Hemen yanıtlayın.",
-          );
-        }
-      } catch (e) {
-        debugPrint('Background notification demo check error: $e');
+        newNotifiedIds.add(demoChatId);
+        hasTriggered = true;
+
+        await NotificationService.showLocalNotification(
+          id: demoChatId.hashCode,
+          title: "Yeni Canlı Destek Talebi! 💬 (Demo)",
+          body: "Ayşe Yılmaz yardım bekliyor. Hemen yanıtlayın.",
+          payload: 'support',
+        );
       }
+
+      if (hasTriggered) {
+        await prefs.setStringList('bg_notified_chats', newNotifiedIds);
+      }
+    } catch (e2) {
+      debugPrint('Background notification demo check error: $e2');
     }
   }
 }
