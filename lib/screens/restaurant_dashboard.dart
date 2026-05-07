@@ -63,8 +63,8 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
     _profileDescCtrl = TextEditingController(text: user?.restaurantDescription ?? "");
     _profileMaxDistanceCtrl = TextEditingController(text: user?.maxDeliveryDistance.toStringAsFixed(1) ?? "5.0");
 
-    // Live support session stream for notifications
-    if (user != null && (user.role == 'support' || user.role == 'support_manager' || user.role == 'admin')) {
+    // Live support session stream for notifications - restricted to support and support_manager roles (excludes admins)
+    if (user != null && (user.role == 'support' || user.role == 'support_manager')) {
       _chatSessionsSubscription = FirebaseService.streamChatSessions().listen((sessions) {
         for (var s in sessions) {
           if (s.isWaiting && (s.assignedAgentId == null || s.assignedAgentId!.isEmpty)) {
@@ -960,24 +960,28 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Ticket Header
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        "Müşteri: ${order.customerName}",
-                        style: GoogleFonts.outfit(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        "No: #${order.id.length > 8 ? order.id.substring(order.id.length - 6).toUpperCase() : order.id} • ${order.createdAt.hour.toString().padLeft(2, '0')}:${order.createdAt.minute.toString().padLeft(2, '0')}",
-                        style: GoogleFonts.outfit(color: Colors.white38, fontSize: 11),
-                      ),
-                    ],
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          "Müşteri: ${order.customerName}",
+                          style: GoogleFonts.outfit(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          "No: #${order.id.length > 8 ? order.id.substring(order.id.length - 6).toUpperCase() : order.id} • ${order.createdAt.hour.toString().padLeft(2, '0')}:${order.createdAt.minute.toString().padLeft(2, '0')}",
+                          style: GoogleFonts.outfit(color: Colors.white38, fontSize: 11),
+                        ),
+                      ],
+                    ),
                   ),
+                  const SizedBox(width: 8),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                     decoration: BoxDecoration(

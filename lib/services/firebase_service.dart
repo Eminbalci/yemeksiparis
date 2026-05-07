@@ -1695,6 +1695,14 @@ class FirebaseService {
   /// Check and trigger background notifications for support staff when app is closed/terminated
   static Future<void> checkBackgroundNotifications() async {
     final prefs = await SharedPreferences.getInstance();
+    final role = prefs.getString('session_role');
+
+    // Security & Scope Protection: Only allow support staff roles to check and receive background support notifications!
+    if (role != 'support' && role != 'support_manager') {
+      debugPrint('Background notification bypassed: current logged user role ($role) is not authorized support personnel.');
+      return;
+    }
+
     final notifiedIds = prefs.getStringList('bg_notified_chats') ?? [];
     final newNotifiedIds = List<String>.from(notifiedIds);
     bool hasTriggered = false;
