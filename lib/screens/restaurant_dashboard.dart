@@ -13,13 +13,15 @@ import 'live_support_screen.dart';
 
 class RestaurantDashboard extends StatefulWidget {
   final int initialTab;
-  const RestaurantDashboard({super.key, this.initialTab = 0});
+  final UserModel? overrideUser;
+  const RestaurantDashboard({super.key, this.initialTab = 0, this.overrideUser});
 
   @override
   State<RestaurantDashboard> createState() => _RestaurantDashboardState();
 }
 
 class _RestaurantDashboardState extends State<RestaurantDashboard> {
+  UserModel? get _activeUser => widget.overrideUser ?? FirebaseService.currentUser;
   late int _currentTab;
   int _managementSubTab = 0;   // 0: Şubeler, 1: İndirim Kodları, 2: Kategoriler
   int _supportQueueSubTab = 0; // 0: Aktif Sohbetler, 1: Geçmiş
@@ -53,7 +55,7 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
   void initState() {
     super.initState();
     _currentTab = widget.initialTab;
-    final user = FirebaseService.currentUser;
+    final user = widget.overrideUser ?? FirebaseService.currentUser;
     _profileNameCtrl = TextEditingController(text: user?.fullName ?? "");
     _profileRestNameCtrl = TextEditingController(text: user?.restaurantName ?? "");
     _profileRestAddressCtrl = TextEditingController(text: user?.restaurantAddress ?? "");
@@ -294,46 +296,80 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
                                 borderRadius: BorderRadius.circular(16),
                                 border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
                               ),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
                                   Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                     children: [
-                                      Icon(
-                                        isAvailable ? Icons.check_circle_rounded : Icons.cancel_rounded,
-                                        color: isAvailable ? const Color(0xFF10B981) : const Color(0xFFEF4444),
-                                        size: 18,
+                                      Row(
+                                        children: [
+                                          Icon(
+                                            isAvailable ? Icons.check_circle_rounded : Icons.cancel_rounded,
+                                            color: isAvailable ? const Color(0xFF10B981) : const Color(0xFFEF4444),
+                                            size: 18,
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            "Stok Durumu",
+                                            style: GoogleFonts.outfit(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                                          ),
+                                        ],
                                       ),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        "Stok Durumu",
-                                        style: GoogleFonts.outfit(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                                      Row(
+                                        children: [
+                                          Text(
+                                            isAvailable ? "Stok Var" : "Stok Yok",
+                                            style: GoogleFonts.outfit(
+                                              color: isAvailable ? const Color(0xFF10B981) : const Color(0xFFEF4444),
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          CupertinoSwitch(
+                                            value: isAvailable,
+                                            activeTrackColor: const Color(0xFF10B981),
+                                            inactiveTrackColor: Colors.white10,
+                                            onChanged: (val) {
+                                              setModalState(() {
+                                                isAvailable = val;
+                                                if (!isAvailable) {
+                                                  _mealStockController.text = "0";
+                                                } else if (_mealStockController.text == "0") {
+                                                  _mealStockController.text = "99";
+                                                }
+                                              });
+                                            },
+                                          ),
+                                        ],
                                       ),
                                     ],
                                   ),
-                                  Row(
-                                    children: [
-                                      Text(
-                                        isAvailable ? "Stok Var" : "Stok Yok",
-                                        style: GoogleFonts.outfit(
-                                          color: isAvailable ? const Color(0xFF10B981) : const Color(0xFFEF4444),
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.bold,
-                                        ),
+                                  if (isAvailable) ...[
+                                    const SizedBox(height: 12),
+                                    TextFormField(
+                                      controller: _mealStockController,
+                                      keyboardType: TextInputType.number,
+                                      style: GoogleFonts.outfit(color: Colors.white, fontSize: 14),
+                                      decoration: const InputDecoration(
+                                        labelText: "Stok Adedi",
+                                        prefixIcon: Icon(Icons.inventory_2_outlined, size: 18, color: Colors.white54),
+                                        hintText: "Örn: 50",
                                       ),
-                                      const SizedBox(width: 8),
-                                      CupertinoSwitch(
-                                        value: isAvailable,
-                                        activeTrackColor: const Color(0xFF10B981),
-                                        inactiveTrackColor: Colors.white10,
-                                        onChanged: (val) {
-                                          setModalState(() {
-                                            isAvailable = val;
-                                          });
-                                        },
-                                      ),
-                                    ],
-                                  ),
+                                      validator: (value) {
+                                        if (isAvailable) {
+                                          if (value == null || value.trim().isEmpty) {
+                                            return "Lütfen stok miktarını girin.";
+                                          }
+                                          if (int.tryParse(value) == null || int.parse(value) < 0) {
+                                            return "Lütfen geçerli bir stok adedi girin.";
+                                          }
+                                        }
+                                        return null;
+                                      },
+                                    ),
+                                  ],
                                 ],
                               ),
                             ),
@@ -436,7 +472,9 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
     final desc = _mealDescController.text.trim();
     final price = double.parse(_mealPriceController.text.trim());
     final img = _mealImageController.text.trim();
-    final stock = isAvailable ? 99 : 0;
+    
+    final stockText = _mealStockController.text.trim();
+    final stock = isAvailable ? (int.tryParse(stockText) ?? 99) : 0;
 
     final FoodItem newMeal = FoodItem(
       id: '',
@@ -447,7 +485,7 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
       category: _selectedCategory,
       rating: 4.8,
       stock: stock,
-      restaurantOwnerId: FirebaseService.currentUser?.uid ?? '',
+      restaurantOwnerId: _activeUser?.uid ?? '',
     );
 
     final error = await FirebaseService.addFoodItem(newMeal);
@@ -479,7 +517,9 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
     final desc = _mealDescController.text.trim();
     final price = double.parse(_mealPriceController.text.trim());
     final img = _mealImageController.text.trim();
-    final stock = isAvailable ? 99 : 0;
+    
+    final stockText = _mealStockController.text.trim();
+    final stock = isAvailable ? (int.tryParse(stockText) ?? 99) : 0;
 
     final FoodItem updatedMeal = FoodItem(
       id: oldMeal.id,
@@ -631,7 +671,8 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
 
   @override
   Widget build(BuildContext context) {
-    if (FirebaseService.currentUser == null) {
+    final user = widget.overrideUser ?? FirebaseService.currentUser;
+    if (user == null) {
       return const Scaffold(
         body: Center(
           child: CupertinoActivityIndicator(radius: 12, color: Colors.white),
@@ -639,23 +680,31 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
       );
     }
     final theme = Theme.of(context);
-    final bool isAdmin = FirebaseService.currentUser?.role == 'admin';
-    final bool isSupport = FirebaseService.currentUser?.role == 'support';
-    final bool isSupportManager = FirebaseService.currentUser?.role == 'support_manager';
+    final bool isAdmin = widget.overrideUser != null ? false : (user.role == 'admin');
+    final bool isSupport = widget.overrideUser != null ? false : (user.role == 'support');
+    final bool isSupportManager = widget.overrideUser != null ? false : (user.role == 'support_manager');
 
     return Scaffold(
       appBar: AppBar(
+        leading: widget.overrideUser != null 
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18, color: Colors.white),
+                onPressed: () => Navigator.of(context).pop(),
+              )
+            : null,
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.dashboard_customize_rounded, color: theme.primaryColor, size: 24),
             const SizedBox(width: 8),
             Text(
-              isSupport
-                  ? "Destek Yetkilisi Paneli"
-                  : (isSupportManager
-                      ? "Destek Yöneticisi Paneli"
-                      : (isAdmin ? "Yönetim Paneli" : "Restoran Paneli")),
+              widget.overrideUser != null
+                  ? "${widget.overrideUser!.restaurantName} Paneli"
+                  : (isSupport
+                      ? "Destek Yetkilisi Paneli"
+                      : (isSupportManager
+                          ? "Destek Yöneticisi Paneli"
+                          : (isAdmin ? "Yönetim Paneli" : "Restoran Paneli"))),
               style: GoogleFonts.outfit(fontWeight: FontWeight.w900, letterSpacing: -0.5),
             ),
           ],
@@ -671,47 +720,7 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
               );
             },
           ),
-          if (!isAdmin && !isSupport && !isSupportManager)
-            Stack(
-              alignment: Alignment.center,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.shopping_cart_rounded, color: Colors.amber, size: 22),
-                  tooltip: "Sepete Git",
-                  onPressed: () {
-                    Navigator.of(context).pushAndRemoveUntil(
-                      MaterialPageRoute(builder: (_) => const CustomerDashboard(showCart: true)),
-                      (route) => false,
-                    );
-                  },
-                ),
-                if (CartManager.itemCount > 0)
-                  Positioned(
-                    right: 4,
-                    top: 4,
-                    child: Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: const BoxDecoration(
-                        color: Color(0xFFEF4444),
-                        shape: BoxShape.circle,
-                      ),
-                      constraints: const BoxConstraints(
-                        minWidth: 16,
-                        minHeight: 16,
-                      ),
-                      child: Text(
-                        "${CartManager.itemCount}",
-                        style: GoogleFonts.outfit(
-                          color: Colors.white,
-                          fontSize: 9,
-                          fontWeight: FontWeight.bold,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
+
           IconButton(
             icon: const Icon(Icons.logout_rounded, color: Colors.white54, size: 22),
             tooltip: "Çıkış Yap",
@@ -730,8 +739,15 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
                 return const Center(child: CupertinoActivityIndicator(radius: 12, color: Colors.white));
               }
 
-              final orders = orderSnapshot.data ?? [];
-              final meals = foodSnapshot.data ?? [];
+              final allOrders = orderSnapshot.data ?? [];
+              final orders = (isAdmin || isSupport || isSupportManager)
+                  ? allOrders
+                  : allOrders.where((o) => o.items.any((item) => item.foodItem.restaurantOwnerId == user.uid)).toList();
+
+              final rawMeals = foodSnapshot.data ?? [];
+              final meals = (isAdmin || isSupport || isSupportManager)
+                  ? rawMeals
+                  : rawMeals.where((m) => m.restaurantOwnerId == user.uid).toList();
 
               // Calculate metrics on the fly!
               double platformRevenue = 0.0;
@@ -745,7 +761,7 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
 
               final int activeOrders = orders.where((o) => o.status != 'delivered').length;
 
-              final isPendingApproval = !isAdmin && !isSupport && !isSupportManager && FirebaseService.currentUser?.status == 'pending_approval';
+              final isPendingApproval = !isAdmin && !isSupport && !isSupportManager && user.status == 'pending_approval';
 
               Widget mainContent;
               if (isSupport) {
@@ -3232,6 +3248,187 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
     );
   }
 
+  Widget _buildAdminDiscountsSubTab(ThemeData theme) {
+    return SingleChildScrollView(
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.only(bottom: 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  "Sistem Geneli Kuponlar",
+                  style: GoogleFonts.outfit(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                ),
+                ElevatedButton.icon(
+                  onPressed: () => _showAddDiscountSheet(isGlobal: true),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: theme.primaryColor.withValues(alpha: 0.15),
+                    foregroundColor: theme.primaryColor,
+                    side: BorderSide(color: theme.primaryColor.withValues(alpha: 0.3)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    minimumSize: const Size(0, 40),
+                  ),
+                  icon: const Icon(Icons.qr_code_rounded, size: 16),
+                  label: Text("Global Kupon Oluştur", style: GoogleFonts.outfit(fontSize: 11, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+          ),
+          StreamBuilder<List<DiscountCode>>(
+            stream: FirebaseService.streamDiscountCodes('global'),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 40),
+                  child: CupertinoActivityIndicator(color: Colors.white),
+                ));
+              }
+              final codes = snapshot.data ?? [];
+              if (codes.isEmpty) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 60),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.confirmation_number_outlined, size: 48, color: Colors.white24),
+                        const SizedBox(height: 12),
+                        Text(
+                          "Henüz sistem geneli (global) kupon bulunmuyor.",
+                          style: GoogleFonts.outfit(color: Colors.white38, fontSize: 13),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+
+              return ListView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                itemCount: codes.length,
+                itemBuilder: (context, idx) {
+                  final c = codes[idx];
+                  final isExpired = c.expiresAt != null && DateTime.now().isAfter(c.expiresAt!);
+                  final isLimitReached = c.maxUses > 0 && c.currentUses >= c.maxUses;
+
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: theme.cardColor,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: theme.primaryColor.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            c.typeLabel,
+                            style: GoogleFonts.outfit(color: theme.primaryColor, fontWeight: FontWeight.bold, fontSize: 13),
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Text(
+                                    c.code,
+                                    style: GoogleFonts.outfit(
+                                      fontWeight: FontWeight.bold, 
+                                      fontSize: 15, 
+                                      color: (isExpired || isLimitReached) ? Colors.white30 : Colors.white, 
+                                      letterSpacing: 1,
+                                      decoration: (isExpired || isLimitReached) ? TextDecoration.lineThrough : null,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  if (isExpired)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: Colors.redAccent.withValues(alpha: 0.15),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        "Süresi Doldu",
+                                        style: GoogleFonts.outfit(fontSize: 8, color: Colors.redAccent, fontWeight: FontWeight.bold),
+                                      ),
+                                    )
+                                  else if (isLimitReached)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: Colors.redAccent.withValues(alpha: 0.15),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        "Limit Doldu",
+                                        style: GoogleFonts.outfit(fontSize: 8, color: Colors.redAccent, fontWeight: FontWeight.bold),
+                                      ),
+                                    )
+                                  else
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: Colors.greenAccent.withValues(alpha: 0.15),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        "Aktif Global",
+                                        style: GoogleFonts.outfit(fontSize: 8, color: Colors.greenAccent, fontWeight: FontWeight.bold),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                c.expiresAt != null
+                                    ? "Süre Bitiş: ${c.expiresAt!.day}/${c.expiresAt!.month}/${c.expiresAt!.year} • Limit: ${c.currentUses}/${c.maxUses == 0 ? 'Sınırsız' : c.maxUses}"
+                                    : "Süre Sınırı Yok • Limit: ${c.currentUses}/${c.maxUses == 0 ? 'Sınırsız' : c.maxUses}",
+                                style: GoogleFonts.outfit(fontSize: 11, color: Colors.white54),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                c.minimumOrderAmount > 0
+                                    ? "Minimum Sipariş Tutarı: ${c.minimumOrderAmount.toStringAsFixed(0)} TL"
+                                    : "Minimum Sipariş Limiti Yok",
+                                style: GoogleFonts.outfit(fontSize: 10, color: Colors.white30, fontStyle: FontStyle.italic),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent, size: 20),
+                          onPressed: () => _handleDeleteDiscount(c),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildRestProfileSubTab(ThemeData theme) {
     final user = FirebaseService.currentUser;
     if (user == null) return const SizedBox();
@@ -3419,7 +3616,7 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
     );
   }
 
-  void _showAddDiscountSheet() {
+  void _showAddDiscountSheet({bool isGlobal = false}) {
     final theme = Theme.of(context);
     final formKey = GlobalKey<FormState>();
     final codeCtrl = TextEditingController();
@@ -3429,6 +3626,8 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
     DiscountType selectedType = DiscountType.percentage;
     bool isStackable = false;
     RestaurantBranch? selectedBranch;
+    final maxUsesCtrl = TextEditingController(text: '0');
+    DateTime? selectedExpiryDate;
 
     showModalBottomSheet(
       context: context,
@@ -3459,8 +3658,8 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
                             Icon(Icons.add_card_rounded, color: theme.primaryColor, size: 24),
                             const SizedBox(width: 8),
                             Text(
-                              "Yeni İndirim Kodu Oluştur",
-                              style: GoogleFonts.outfit(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                              isGlobal ? "Global İndirim Kodu Oluştur" : "Yeni İndirim Kodu Oluştur",
+                              style: GoogleFonts.outfit(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
                             ),
                           ],
                         ),
@@ -3541,37 +3740,114 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
                             return null;
                           },
                         ),
+                        if (!isGlobal) ...[
+                          StreamBuilder<List<RestaurantBranch>>(
+                            stream: FirebaseService.streamBranches(_activeUser?.uid ?? ''),
+                            builder: (context, branchSnap) {
+                              final branches = branchSnap.data ?? [];
+                              return Theme(
+                                data: theme.copyWith(canvasColor: theme.cardColor),
+                                child: DropdownButtonFormField<RestaurantBranch?>(
+                                  initialValue: selectedBranch,
+                                  style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
+                                  decoration: const InputDecoration(
+                                    labelText: "Geçerli Olacağı Şube",
+                                    prefixIcon: Icon(Icons.location_city_rounded, size: 18, color: Colors.white54),
+                                  ),
+                                  items: [
+                                    DropdownMenuItem<RestaurantBranch?>(
+                                      value: null,
+                                      child: Text("Tüm Şubeler", style: GoogleFonts.outfit(color: Colors.white)),
+                                    ),
+                                    ...branches.map((b) => DropdownMenuItem<RestaurantBranch?>(
+                                          value: b,
+                                          child: Text(b.name, style: GoogleFonts.outfit(color: Colors.white)),
+                                        )),
+                                  ],
+                                  onChanged: (val) {
+                                    setModalState(() => selectedBranch = val);
+                                  },
+                                ),
+                              );
+                            },
+                          ),
+                          const SizedBox(height: 12),
+                        ],
+
+                        TextFormField(
+                          controller: maxUsesCtrl,
+                          keyboardType: TextInputType.number,
+                          style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
+                          decoration: const InputDecoration(
+                            labelText: "Kullanım Limiti (0 = Sınırsız)",
+                            prefixIcon: Icon(Icons.pin_outlined, size: 18, color: Colors.white54),
+                            hintText: "Örn: 50 (Bu kupon en fazla kaç kez kullanılabilir?)",
+                          ),
+                          validator: (v) {
+                            if (v != null && v.isNotEmpty && int.tryParse(v) == null) {
+                              return "Lütfen geçerli bir limit girin";
+                            }
+                            return null;
+                          },
+                        ),
                         const SizedBox(height: 12),
 
-                        StreamBuilder<List<RestaurantBranch>>(
-                          stream: FirebaseService.streamBranches(FirebaseService.currentUser?.uid ?? ''),
-                          builder: (context, branchSnap) {
-                            final branches = branchSnap.data ?? [];
-                            return Theme(
-                              data: theme.copyWith(canvasColor: theme.cardColor),
-                              child: DropdownButtonFormField<RestaurantBranch?>(
-                                initialValue: selectedBranch,
-                                style: GoogleFonts.outfit(color: Colors.white, fontSize: 13),
-                                decoration: const InputDecoration(
-                                  labelText: "Geçerli Olacağı Şube",
-                                  prefixIcon: Icon(Icons.location_city_rounded, size: 18, color: Colors.white54),
-                                ),
-                                items: [
-                                  DropdownMenuItem<RestaurantBranch?>(
-                                    value: null,
-                                    child: Text("Tüm Şubeler", style: GoogleFonts.outfit(color: Colors.white)),
+                        // Expiration Date Picker
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.02),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(Icons.calendar_today_rounded, color: Colors.white54, size: 18),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    "Süre Limiti (Bitiş)",
+                                    style: GoogleFonts.outfit(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
                                   ),
-                                  ...branches.map((b) => DropdownMenuItem<RestaurantBranch?>(
-                                        value: b,
-                                        child: Text(b.name, style: GoogleFonts.outfit(color: Colors.white)),
-                                      )),
                                 ],
-                                onChanged: (val) {
-                                  setModalState(() => selectedBranch = val);
-                                },
                               ),
-                            );
-                          },
+                              TextButton.icon(
+                                onPressed: () async {
+                                  final picked = await showDatePicker(
+                                    context: context,
+                                    initialDate: selectedExpiryDate ?? DateTime.now().add(const Duration(days: 7)),
+                                    firstDate: DateTime.now(),
+                                    lastDate: DateTime.now().add(const Duration(days: 365)),
+                                    builder: (context, child) {
+                                      return Theme(
+                                        data: theme.copyWith(
+                                          colorScheme: theme.colorScheme.copyWith(
+                                            primary: theme.primaryColor,
+                                            onPrimary: Colors.black,
+                                          ),
+                                        ),
+                                        child: child!,
+                                      );
+                                    },
+                                  );
+                                  if (picked != null) {
+                                    setModalState(() {
+                                      selectedExpiryDate = picked;
+                                    });
+                                  }
+                                },
+                                icon: Icon(Icons.edit_calendar_rounded, size: 16, color: theme.primaryColor),
+                                label: Text(
+                                  selectedExpiryDate != null 
+                                      ? "${selectedExpiryDate!.day}/${selectedExpiryDate!.month}/${selectedExpiryDate!.year}"
+                                      : "Tarih Seçin (İsteğe Bağlı)",
+                                  style: GoogleFonts.outfit(color: selectedExpiryDate != null ? Colors.white : theme.primaryColor, fontSize: 12, fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                         const SizedBox(height: 12),
 
@@ -3596,12 +3872,14 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
                               code: codeCtrl.text.trim().toUpperCase(),
                               type: selectedType,
                               value: double.parse(valueCtrl.text.trim()),
-                              restaurantOwnerId: user.uid,
-                              branchId: selectedBranch?.id,
-                              branchName: selectedBranch?.name ?? 'Tüm Şubeler',
+                              restaurantOwnerId: isGlobal ? 'global' : user.uid,
+                              branchId: isGlobal ? null : selectedBranch?.id,
+                              branchName: isGlobal ? 'Tüm Restoranlar ve Şubeler' : (selectedBranch?.name ?? 'Tüm Şubeler'),
                               minimumOrderAmount: double.parse(minAmountCtrl.text.trim()),
                               stackable: isStackable,
                               isActive: true,
+                              maxUses: int.parse(maxUsesCtrl.text.trim()),
+                              expiresAt: selectedExpiryDate,
                             );
 
                             final err = await FirebaseService.saveDiscountCode(newCode);
@@ -3844,16 +4122,24 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
             final displayName = rest.restaurantName.isNotEmpty ? rest.restaurantName : "İsimsiz Restoran";
             final displayAddress = rest.restaurantAddress.isNotEmpty ? rest.restaurantAddress : "Adres Belirtilmemiş";
 
-            return Container(
-              margin: const EdgeInsets.only(bottom: 12),
-              decoration: BoxDecoration(
-                color: theme.cardColor,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
-              ),
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
+            return GestureDetector(
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (context) => RestaurantDashboard(overrideUser: rest),
+                  ),
+                );
+              },
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: theme.cardColor,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
+                ),
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
                   Container(
                     width: 52,
                     height: 52,
@@ -4044,7 +4330,8 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
                   ),
                 ],
               ),
-            );
+            ),
+          );
           },
         );
       },
@@ -4425,6 +4712,27 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
                     ),
                   ),
                 ),
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => setState(() => _adminSuiteSubTab = 4),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      decoration: BoxDecoration(
+                        color: _adminSuiteSubTab == 4 ? theme.primaryColor : Colors.transparent,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        "Kuponlar",
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.outfit(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 10,
+                          color: _adminSuiteSubTab == 4 ? Colors.black : Colors.white60,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -4432,12 +4740,13 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
 
         Expanded(
           child: IndexedStack(
-            index: _adminSuiteSubTab >= 4 ? 0 : _adminSuiteSubTab,
+            index: _adminSuiteSubTab >= 5 ? 0 : _adminSuiteSubTab,
             children: [
               _buildAnalyticsTab(theme, totalRevenue, activeOrders, mealsCount, orders),
               _buildUsersTab(theme),
               _buildCategoriesSubTab(theme),
               _buildRestaurantsSubTab(theme),
+              _buildAdminDiscountsSubTab(theme),
             ],
           ),
         ),

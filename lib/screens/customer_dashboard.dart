@@ -491,13 +491,19 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                                       onPressed: () async {
                                         final code = couponController.text.trim();
                                         if (code.isEmpty) return;
-                                        final dc = await FirebaseService.validateDiscountCode(code, subtotal);
+                                        
+                                        // Retrieve the restaurant owner ID of the active cart items
+                                        final currentRestOwnerId = _cart.isNotEmpty 
+                                            ? _cart.values.first.foodItem.restaurantOwnerId 
+                                            : "";
+                                            
+                                        final dc = await FirebaseService.validateDiscountCode(code, subtotal, currentRestOwnerId);
                                         setModalState(() {
                                           if (dc != null) {
                                             appliedDiscount = dc;
                                             discountError = "";
                                           } else {
-                                            discountError = "Geçersiz kod veya alt limite ulaşılmadı.";
+                                            discountError = "Geçersiz kod, kullanım limiti doldu veya alt limite ulaşılmadı.";
                                           }
                                         });
                                       },
@@ -940,7 +946,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                                 }
 
                                 Navigator.of(context).pop(); // Close bottom sheet
-                                _placeCustomerOrder(total, isTakeaway: isTakeawaySelected, note: noteController.text.trim());
+                                _placeCustomerOrder(total, isTakeaway: isTakeawaySelected, note: noteController.text.trim(), couponCode: appliedDiscount?.code);
                               },
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: underMin ? Colors.white12 : Theme.of(context).primaryColor,
@@ -978,7 +984,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
   }
 
   // Handle Checkout Action
-  Future<void> _placeCustomerOrder(double totalAmount, {bool isTakeaway = false, String? note}) async {
+  Future<void> _placeCustomerOrder(double totalAmount, {bool isTakeaway = false, String? note, String? couponCode}) async {
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -992,6 +998,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
       totalAmount,
       isTakeaway: isTakeaway,
       note: note,
+      couponCode: couponCode,
     );
 
     if (mounted) Navigator.of(context).pop(); // Dismiss loading spinner
@@ -1202,9 +1209,9 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
           type: BottomNavigationBarType.fixed,
           items: const [
             BottomNavigationBarItem(
-              icon: Icon(Icons.restaurant_menu),
-              activeIcon: Icon(Icons.restaurant_menu_rounded),
-              label: "Yemekler",
+              icon: Icon(Icons.restaurant),
+              activeIcon: Icon(Icons.restaurant_rounded),
+              label: "Restoranlar",
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.receipt_long_outlined),

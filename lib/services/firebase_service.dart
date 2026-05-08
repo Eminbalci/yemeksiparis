@@ -386,7 +386,7 @@ class FirebaseService {
   }
 
   // Submit Order (Customer)
-  static Future<String?> placeOrder(List<OrderItem> items, double total, {bool isTakeaway = false, String? note}) async {
+  static Future<String?> placeOrder(List<OrderItem> items, double total, {bool isTakeaway = false, String? note, String? couponCode}) async {
     if (currentUser == null) return "Giriş yapmış bir kullanıcı bulunamadı.";
 
     if (!useDemoMode) {
@@ -404,6 +404,24 @@ class FirebaseService {
         );
 
         await FirebaseFirestore.instance.collection('orders').add(newOrder.toMap());
+
+        // Increment coupon usage
+        if (couponCode != null && couponCode.isNotEmpty) {
+          final couponSnap = await FirebaseFirestore.instance
+              .collection('discount_codes')
+              .where('code', isEqualTo: couponCode.toUpperCase())
+              .limit(1)
+              .get();
+          if (couponSnap.docs.isNotEmpty) {
+            final docId = couponSnap.docs.first.id;
+            final currentVal = couponSnap.docs.first.data()['currentUses'] ?? 0;
+            await FirebaseFirestore.instance
+                .collection('discount_codes')
+                .doc(docId)
+                .update({'currentUses': currentVal + 1});
+          }
+        }
+
         return null;
       } catch (e) {
         return e.toString();
@@ -424,6 +442,16 @@ class FirebaseService {
 
       _mockOrders.insert(0, newOrder);
       _orderStreamController.add(List.from(_mockOrders));
+
+      // Increment coupon usage in demo mock
+      if (couponCode != null && couponCode.isNotEmpty) {
+        try {
+          final coupon = _mockDiscountCodes.firstWhere((d) => d.code == couponCode.toUpperCase());
+          coupon.currentUses++;
+          _discountStreamController.add(List.from(_mockDiscountCodes));
+        } catch (_) {}
+      }
+
       return null;
     }
   }
@@ -745,9 +773,19 @@ class FirebaseService {
   static Future<String?> saveBranch(String uid, RestaurantBranch branch) async {
     if (!useDemoMode) {
       try {
-        await FirebaseFirestore.instance
+        final docRef = FirebaseFirestore.instance
             .collection('restaurants').doc(uid).collection('branches')
-            .doc(branch.id).set(branch.toMap());
+            .doc(branch.id.isEmpty ? null : branch.id);
+
+        final finalBranch = RestaurantBranch(
+          id: docRef.id,
+          name: branch.name,
+          address: branch.address,
+          phone: branch.phone,
+          isActive: branch.isActive,
+        );
+
+        await docRef.set(finalBranch.toMap());
         return null;
       } catch (e) {
         return e.toString();
@@ -756,8 +794,20 @@ class FirebaseService {
       await Future.delayed(const Duration(milliseconds: 200));
       _mockBranches.putIfAbsent(uid, () => []);
       final list = _mockBranches[uid]!;
-      final idx = list.indexWhere((b) => b.id == branch.id);
-      if (idx == -1) { list.add(branch); } else { list[idx] = branch; }
+
+      final finalId = branch.id.isEmpty 
+          ? "demo_branch_${DateTime.now().millisecondsSinceEpoch}" 
+          : branch.id;
+      final finalBranch = RestaurantBranch(
+        id: finalId,
+        name: branch.name,
+        address: branch.address,
+        phone: branch.phone,
+        isActive: branch.isActive,
+      );
+
+      final idx = list.indexWhere((b) => b.id == finalBranch.id);
+      if (idx == -1) { list.add(finalBranch); } else { list[idx] = finalBranch; }
       _branchStreamController.add(List.from(list));
       return null;
     }
@@ -846,7 +896,7 @@ class FirebaseService {
   }
 
   /// Validate a discount code and return DiscountCode if valid, null otherwise
-  static Future<DiscountCode?> validateDiscountCode(String code, double cartTotal) async {
+  static Future<DiscountCode?> validateDiscountCode(String code, double cartTotal, String currentRestaurantOwnerId) async {
     if (!useDemoMode) {
       try {
         final snap = await FirebaseFirestore.instance
@@ -857,6 +907,11 @@ class FirebaseService {
         if (snap.docs.isEmpty) return null;
         final dc = DiscountCode.fromMap(snap.docs.first.data());
         if (!dc.isValid || cartTotal < dc.minimumOrderAmount) return null;
+        
+        // Enforce restaurant specificity: must match the ordered restaurant or be 'global'
+        if (dc.restaurantOwnerId != 'global' && dc.restaurantOwnerId != currentRestaurantOwnerId) {
+          return null;
+        }
         return dc;
       } catch (_) {
         return null;
@@ -864,9 +919,14 @@ class FirebaseService {
     } else {
       await Future.delayed(const Duration(milliseconds: 400));
       try {
-        return _mockDiscountCodes.firstWhere(
+        final dc = _mockDiscountCodes.firstWhere(
           (d) => d.code == code.toUpperCase() && d.isValid && cartTotal >= d.minimumOrderAmount,
         );
+        // Enforce restaurant specificity: must match the ordered restaurant or be 'global'
+        if (dc.restaurantOwnerId != 'global' && dc.restaurantOwnerId != currentRestaurantOwnerId) {
+          return null;
+        }
+        return dc;
       } catch (_) {
         return null;
       }
