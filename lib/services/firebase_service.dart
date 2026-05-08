@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -15,10 +16,47 @@ class FirebaseService {
   static bool isFirebaseInitialized = false;
   static bool useDemoMode = true; // Automatically falls back to Demo Mode if Firebase init fails
 
+  static Widget buildFoodImage(String url, {double? width, double? height, BoxFit fit = BoxFit.cover}) {
+    if (url.startsWith('data:image/') || url.contains('base64,')) {
+      try {
+        final base64String = url.split(',').last;
+        final bytes = base64.decode(base64String);
+        return Image.memory(
+          bytes,
+          width: width,
+          height: height,
+          fit: fit,
+          errorBuilder: (c, e, s) => Container(
+            color: Colors.white10,
+            width: width,
+            height: height,
+            child: const Icon(Icons.fastfood, color: Colors.white24),
+          ),
+        );
+      } catch (_) {}
+    }
+    return Image.network(
+      url.isEmpty ? 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c' : url,
+      width: width,
+      height: height,
+      fit: fit,
+      errorBuilder: (c, e, s) => Container(
+        color: Colors.white10,
+        width: width,
+        height: height,
+        child: const Icon(Icons.fastfood, color: Colors.white24),
+      ),
+    );
+  }
+
   // Active Session
   static UserModel? currentUser;
   static List<UserModel> _firestoreUsers = [];
+  static List<RestaurantBranch> _firestoreAllBranches = [];
+  static List<FoodItem> _firestoreAllFoodItems = [];
   static StreamSubscription? _usersSubscription;
+  static StreamSubscription? _branchesSubscription;
+  static StreamSubscription? _foodItemsSubscription;
 
   static void startUsersSynchronizer() {
     if (useDemoMode) return;
@@ -31,6 +69,33 @@ class FirebaseService {
       }).toList();
     }, onError: (err) {
       debugPrint("Kullanıcı senkronizasyon hatası (Giriş yapılınca düzelecektir): $err");
+    });
+
+    _branchesSubscription?.cancel();
+    _branchesSubscription = FirebaseFirestore.instance.collectionGroup('branches').snapshots().listen((snapshot) {
+      _firestoreAllBranches = snapshot.docs.map((doc) {
+        final Map<String, dynamic> data = Map<String, dynamic>.from(doc.data());
+        if (data['restaurantOwnerId'] == null || (data['restaurantOwnerId'] as String).isEmpty) {
+          final pathParts = doc.reference.path.split('/');
+          if (pathParts.length >= 2) {
+            data['restaurantOwnerId'] = pathParts[1];
+          }
+        }
+        return RestaurantBranch.fromMap(data);
+      }).toList();
+    }, onError: (err) {
+      debugPrint("Şube senkronizasyon hatası: $err");
+    });
+
+    _foodItemsSubscription?.cancel();
+    _foodItemsSubscription = FirebaseFirestore.instance.collection('meals').snapshots().listen((snapshot) {
+      _firestoreAllFoodItems = snapshot.docs.map((doc) {
+        Map<String, dynamic> data = doc.data();
+        data['id'] = doc.id;
+        return FoodItem.fromMap(data);
+      }).toList();
+    }, onError: (err) {
+      debugPrint("Yemekler senkronizasyon hatası: $err");
     });
   }
 
@@ -282,7 +347,13 @@ class FirebaseService {
   static Future<void> signOut() async {
     _usersSubscription?.cancel();
     _usersSubscription = null;
+    _branchesSubscription?.cancel();
+    _branchesSubscription = null;
+    _foodItemsSubscription?.cancel();
+    _foodItemsSubscription = null;
     _firestoreUsers = [];
+    _firestoreAllBranches = [];
+    _firestoreAllFoodItems = [];
     if (!useDemoMode) {
       await FirebaseAuth.instance.signOut();
     }
@@ -783,6 +854,7 @@ class FirebaseService {
           address: branch.address,
           phone: branch.phone,
           isActive: branch.isActive,
+          restaurantOwnerId: uid,
         );
 
         await docRef.set(finalBranch.toMap());
@@ -804,6 +876,7 @@ class FirebaseService {
         address: branch.address,
         phone: branch.phone,
         isActive: branch.isActive,
+        restaurantOwnerId: uid,
       );
 
       final idx = list.indexWhere((b) => b.id == finalBranch.id);
@@ -1165,17 +1238,101 @@ class FirebaseService {
   // ─────────────────────────────────────────
   // NEARBY RESTAURANTS (distance and address based)
   // ─────────────────────────────────────────
+  static double getMinDistanceKm(String userAddress, UserModel restaurant) {
+    if (userAddress.trim().isEmpty) return 999.0;
+    
+    double minDistance = 999.0;
+    
+    if (restaurant.restaurantAddress.trim().isNotEmpty) {
+      minDistance = calculateDistanceKm(userAddress, restaurant.restaurantAddress);
+    }
+    
+    final List<RestaurantBranch> branches = useDemoMode
+        ? (_mockBranches[restaurant.uid] ?? [])
+        : _firestoreAllBranches.where((b) => b.restaurantOwnerId == restaurant.uid).toList();
+        
+    for (var branch in branches) {
+      if (branch.isActive && branch.address.trim().isNotEmpty) {
+        final double dist = calculateDistanceKm(userAddress, branch.address);
+        if (dist < minDistance) {
+          minDistance = dist;
+        }
+      }
+    }
+    
+    return minDistance;
+  }
+
+  /// Get the address of the closest location (either main or branch) for a given restaurant
+  static String getClosestLocationAddress(String userAddress, UserModel restaurant) {
+    if (userAddress.trim().isEmpty) return restaurant.restaurantAddress;
+
+    double minDistance = 999.0;
+    String closestAddress = restaurant.restaurantAddress.isNotEmpty ? restaurant.restaurantAddress : "Adres bilgisi yok";
+
+    if (restaurant.restaurantAddress.trim().isNotEmpty) {
+      minDistance = calculateDistanceKm(userAddress, restaurant.restaurantAddress);
+    }
+
+    final List<RestaurantBranch> branches = useDemoMode
+        ? (_mockBranches[restaurant.uid] ?? [])
+        : _firestoreAllBranches.where((b) => b.restaurantOwnerId == restaurant.uid).toList();
+
+    for (var branch in branches) {
+      if (branch.isActive && branch.address.trim().isNotEmpty) {
+        final double dist = calculateDistanceKm(userAddress, branch.address);
+        if (dist < minDistance) {
+          minDistance = dist;
+          closestAddress = branch.address;
+        }
+      }
+    }
+
+    return closestAddress;
+  }
+
+  /// Get the user-friendly closest location distance string (meters or kilometers)
+  static String getClosestLocationDistanceString(String userAddress, UserModel restaurant) {
+    final double dist = getMinDistanceKm(userAddress, restaurant);
+    if (dist >= 1.0) {
+      return "${dist.toStringAsFixed(1)} km";
+    } else {
+      final double meters = dist * 1000.0;
+      return "${meters.toStringAsFixed(0)} m";
+    }
+  }
+
+  /// Returns whether a restaurant has at least one active food item
+  static bool hasRestaurantFoodItems(String restaurantOwnerId) {
+    final List<FoodItem> items = useDemoMode 
+        ? _mockFoodItems 
+        : _firestoreAllFoodItems;
+    return items.any((item) => item.restaurantOwnerId == restaurantOwnerId);
+  }
+
   static List<UserModel> getNearbyRestaurants(String userAddress) {
     if (userAddress.trim().isEmpty) return [];
 
     final sourceList = useDemoMode ? _mockUsers : _firestoreUsers;
     final restaurants = sourceList.where((u) => u.role == 'restaurant_owner' && u.status == 'active').toList();
     
-    return restaurants.where((r) {
-      if (r.restaurantAddress.trim().isEmpty) return false;
-      final double distance = calculateDistanceKm(userAddress, r.restaurantAddress);
-      return distance <= r.maxDeliveryDistance;
+    final filtered = restaurants.where((r) {
+      // 1. Check distance limit
+      final double distance = getMinDistanceKm(userAddress, r);
+      if (distance > r.maxDeliveryDistance) return false;
+      
+      // 2. MUST have at least one product/food item to be listed on customer home screen
+      return hasRestaurantFoodItems(r.uid);
     }).toList();
+
+    // Sort by minimum distance ascending (nearest first!)
+    filtered.sort((a, b) {
+      final distA = getMinDistanceKm(userAddress, a);
+      final distB = getMinDistanceKm(userAddress, b);
+      return distA.compareTo(distB);
+    });
+
+    return filtered;
   }
 
   /// Get a restaurant owner sync
@@ -1699,6 +1856,7 @@ class FirebaseService {
             'role': 'restaurant_owner',
             'restaurantName': rName,
             'restaurantAddress': rAddress,
+            'restaurantOwnerId': invitation.restaurantOwnerId,
           });
 
           // Update local currentUser state
@@ -1706,6 +1864,7 @@ class FirebaseService {
             role: 'restaurant_owner',
             restaurantName: rName,
             restaurantAddress: rAddress,
+            restaurantOwnerId: invitation.restaurantOwnerId,
           );
         }
 
@@ -1740,6 +1899,7 @@ class FirebaseService {
             role: 'restaurant_owner',
             restaurantName: rName,
             restaurantAddress: rAddress,
+            restaurantOwnerId: invitation.restaurantOwnerId,
           );
           currentUser = _mockUsers[userIdx];
           _usersStreamController.add(List.from(_mockUsers));

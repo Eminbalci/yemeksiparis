@@ -59,6 +59,7 @@ class MockData {
           address: 'Bahariye Caddesi No:42, Kadıköy, İstanbul',
           phone: '0216 555 44 33',
           isActive: true,
+          restaurantOwnerId: 'demo_restaurant_1',
         ),
       ],
     };

@@ -390,17 +390,11 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                                         // Leading food thumbnail image
                                         ClipRRect(
                                           borderRadius: BorderRadius.circular(12),
-                                          child: Image.network(
+                                          child: FirebaseService.buildFoodImage(
                                             item.foodItem.imageUrl,
                                             width: 60,
                                             height: 60,
                                             fit: BoxFit.cover,
-                                            errorBuilder: (c, e, s) => Container(
-                                              color: Colors.white10,
-                                              width: 60,
-                                              height: 60,
-                                              child: const Icon(Icons.fastfood, color: Colors.white30),
-                                            ),
                                           ),
                                         ),
                                         const SizedBox(width: 14),
@@ -1347,15 +1341,33 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
               itemCount: FirebaseService.getNearbyRestaurants(user.address).length,
               itemBuilder: (context, idx) {
                 final r = FirebaseService.getNearbyRestaurants(user.address)[idx];
-                return Container(
-                  width: 180,
-                  margin: const EdgeInsets.symmetric(horizontal: 4),
-                  decoration: BoxDecoration(
-                    color: theme.cardColor,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: const Color(0xFF10B981).withValues(alpha: 0.15)),
-                  ),
-                  padding: const EdgeInsets.all(12),
+                return GestureDetector(
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => RestaurantDetailScreen(
+                          restaurant: r,
+                          cart: _cart,
+                          onAdd: _addToCart,
+                          onUpdateQuantity: _updateCartQuantity,
+                          onShowCart: _showCartSheet,
+                          cartItemCount: _cartItemCount,
+                          cartTotal: _cartTotal,
+                        ),
+                      ),
+                    ).then((_) {
+                      setState(() {});
+                    });
+                  },
+                  child: Container(
+                    width: 180,
+                    margin: const EdgeInsets.symmetric(horizontal: 4),
+                    decoration: BoxDecoration(
+                      color: theme.cardColor,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: const Color(0xFF10B981).withValues(alpha: 0.15)),
+                    ),
+                    padding: const EdgeInsets.all(12),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -1368,7 +1380,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        r.restaurantAddress.isNotEmpty ? r.restaurantAddress : "Adres bilgisi yok",
+                        FirebaseService.getClosestLocationAddress(user.address, r),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: GoogleFonts.outfit(fontSize: 10, color: Colors.white38),
@@ -1379,14 +1391,15 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                           const Icon(Icons.delivery_dining, size: 12, color: Color(0xFF10B981)),
                           const SizedBox(width: 4),
                           Text(
-                            FirebaseService.calculateDistanceString(user.address, r.restaurantAddress),
+                            FirebaseService.getClosestLocationDistanceString(user.address, r),
                             style: GoogleFonts.outfit(fontSize: 9, color: const Color(0xFF10B981), fontWeight: FontWeight.w600),
                           ),
                         ],
                       ),
                     ],
                   ),
-                );
+                ),
+              );
               },
             ),
           ),
@@ -1546,7 +1559,6 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                   itemBuilder: (context, index) {
                     final rest = filteredRestaurants[index];
                     final String rName = rest.restaurantName.isNotEmpty ? rest.restaurantName : rest.fullName;
-                    final double dist = FirebaseService.calculateDistanceKm(user.address, rest.restaurantAddress);
                     
                     return GestureDetector(
                       onTap: () {
@@ -1583,8 +1595,10 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                               child: Stack(
                                 fit: StackFit.expand,
                                 children: [
-                                  Image.network(
-                                    "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=400&auto=format&fit=crop&q=60",
+                                  FirebaseService.buildFoodImage(
+                                    rest.restaurantLogo.isNotEmpty
+                                        ? rest.restaurantLogo
+                                        : "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=400&auto=format&fit=crop&q=60",
                                     fit: BoxFit.cover,
                                   ),
                                   Container(
@@ -1611,7 +1625,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                                           const Icon(Icons.delivery_dining, color: Colors.white, size: 10),
                                           const SizedBox(width: 4),
                                           Text(
-                                            "${dist.toStringAsFixed(1)} km",
+                                            FirebaseService.getClosestLocationDistanceString(user.address, rest),
                                             style: GoogleFonts.outfit(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.white),
                                           ),
                                         ],
@@ -1638,7 +1652,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                                     ),
                                     const SizedBox(height: 4),
                                     Text(
-                                      rest.restaurantAddress,
+                                      FirebaseService.getClosestLocationAddress(user.address, rest),
                                       style: GoogleFonts.outfit(fontSize: 11, color: Colors.white38),
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,

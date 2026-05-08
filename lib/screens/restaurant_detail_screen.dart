@@ -37,6 +37,14 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
     final theme = Theme.of(context);
     final rest = widget.restaurant;
 
+    // Dynamically calculate actual current cart totals from the reference Map
+    int localItemCount = 0;
+    double localTotal = 0.0;
+    widget.cart.forEach((_, item) {
+      localItemCount += item.quantity;
+      localTotal += item.foodItem.price * item.quantity;
+    });
+
     return Scaffold(
       body: Stack(
         children: [
@@ -83,6 +91,48 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
                         ),
                       ),
                     ),
+                    actions: [
+                      Padding(
+                        padding: const EdgeInsets.only(right: 12.0),
+                        child: CircleAvatar(
+                          backgroundColor: Colors.black54,
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.shopping_cart_rounded, color: Colors.white, size: 18),
+                                onPressed: widget.onShowCart,
+                              ),
+                              if (localItemCount > 0)
+                                Positioned(
+                                  right: 4,
+                                  top: 4,
+                                  child: Container(
+                                    padding: const EdgeInsets.all(3),
+                                    decoration: const BoxDecoration(
+                                      color: Colors.redAccent,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    constraints: const BoxConstraints(
+                                      minWidth: 14,
+                                      minHeight: 14,
+                                    ),
+                                    child: Text(
+                                      "$localItemCount",
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 8,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
                     flexibleSpace: FlexibleSpaceBar(
                       stretchModes: const [
                         StretchMode.zoomBackground,
@@ -264,7 +314,7 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
                       sliver: SliverGrid(
                         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: 2,
-                          childAspectRatio: 0.72,
+                          childAspectRatio: 0.66,
                           crossAxisSpacing: 14,
                           mainAxisSpacing: 14,
                         ),
@@ -287,10 +337,8 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
                                   // Meal Image
                                   Expanded(
                                     flex: 11,
-                                    child: Image.network(
-                                      meal.imageUrl.isNotEmpty
-                                          ? meal.imageUrl
-                                          : "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400",
+                                    child: FirebaseService.buildFoodImage(
+                                      meal.imageUrl,
                                       fit: BoxFit.cover,
                                     ),
                                   ),
@@ -350,7 +398,10 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
                                                         padding: EdgeInsets.zero,
                                                         constraints: const BoxConstraints(minWidth: 24),
                                                         icon: const Icon(Icons.remove, size: 14, color: Colors.white),
-                                                        onPressed: () => widget.onUpdateQuantity(meal.id, -1),
+                                                        onPressed: () {
+                                                          widget.onUpdateQuantity(meal.id, -1);
+                                                          setState(() {});
+                                                        },
                                                       ),
                                                       Text(
                                                         "${cartItem.quantity}",
@@ -364,7 +415,10 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
                                                         padding: EdgeInsets.zero,
                                                         constraints: const BoxConstraints(minWidth: 24),
                                                         icon: const Icon(Icons.add, size: 14, color: Colors.white),
-                                                        onPressed: () => widget.onUpdateQuantity(meal.id, 1),
+                                                        onPressed: () {
+                                                          widget.onUpdateQuantity(meal.id, 1);
+                                                          setState(() {});
+                                                        },
                                                       ),
                                                     ],
                                                   ),
@@ -382,7 +436,10 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
                                                       side: BorderSide(color: theme.primaryColor.withValues(alpha: 0.2)),
                                                     ),
                                                   ),
-                                                  onPressed: () => widget.onAdd(meal),
+                                                  onPressed: () {
+                                                    widget.onAdd(meal);
+                                                    setState(() {});
+                                                  },
                                                   child: Text(
                                                     "Ekle",
                                                     style: GoogleFonts.outfit(
@@ -411,7 +468,7 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
           ),
 
           // Floating bottom Cart preview bar (only if cart has items belonging to this restaurant!)
-          if (widget.cartItemCount > 0 && widget.cart.values.first.foodItem.restaurantOwnerId == rest.uid)
+          if (localItemCount > 0 && widget.cart.values.first.foodItem.restaurantOwnerId == rest.uid)
             Positioned(
               left: 16,
               right: 16,
@@ -444,7 +501,7 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
                           shape: BoxShape.circle,
                         ),
                         child: Text(
-                          "${widget.cartItemCount}",
+                          "$localItemCount",
                           style: GoogleFonts.outfit(
                             fontWeight: FontWeight.bold,
                             color: Colors.white,
@@ -463,7 +520,7 @@ class _RestaurantDetailScreenState extends State<RestaurantDetailScreen> {
                       ),
                       const Spacer(),
                       Text(
-                        "${widget.cartTotal.toStringAsFixed(0)} TL",
+                        "${localTotal.toStringAsFixed(0)} TL",
                         style: GoogleFonts.outfit(
                           fontWeight: FontWeight.w900,
                           color: Colors.white,

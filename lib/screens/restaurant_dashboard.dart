@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -22,6 +23,11 @@ class RestaurantDashboard extends StatefulWidget {
 
 class _RestaurantDashboardState extends State<RestaurantDashboard> {
   UserModel? get _activeUser => widget.overrideUser ?? FirebaseService.currentUser;
+  String get _activeOwnerId {
+    final u = _activeUser;
+    if (u == null) return '';
+    return u.restaurantOwnerId.isNotEmpty ? u.restaurantOwnerId : u.uid;
+  }
   late int _currentTab;
   int _managementSubTab = 0;   // 0: Şubeler, 1: İndirim Kodları, 2: Kategoriler
   int _supportQueueSubTab = 0; // 0: Aktif Sohbetler, 1: Geçmiş
@@ -412,16 +418,61 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
                             ),
                             const SizedBox(height: 14),
 
-                            // Custom image url (Optional)
+                            // Custom image url or local pick
                             TextFormField(
                               controller: _mealImageController,
                               style: GoogleFonts.outfit(color: Colors.white, fontSize: 14),
-                              decoration: const InputDecoration(
-                                labelText: "Görsel URL'si (İsteğe Bağlı)",
-                                prefixIcon: Icon(Icons.image_outlined, size: 18, color: Colors.white54),
-                                hintText: "Boş bırakılırsa varsayılan görsel atanır.",
+                              decoration: InputDecoration(
+                                labelText: "Görsel URL'si veya Cihazdan Seç",
+                                prefixIcon: const Icon(Icons.image_outlined, size: 18, color: Colors.white54),
+                                hintText: "Boş bırakılabilir veya sağdan seçilebilir.",
+                                suffixIcon: IconButton(
+                                  icon: Icon(Icons.add_photo_alternate_rounded, color: Theme.of(context).primaryColor),
+                                  tooltip: "Cihazdan Görsel Seç",
+                                  onPressed: () async {
+                                    final picker = ImagePicker();
+                                    final pickedFile = await picker.pickImage(
+                                      source: ImageSource.gallery,
+                                      imageQuality: 50,
+                                    );
+                                    if (pickedFile != null) {
+                                      final bytes = await pickedFile.readAsBytes();
+                                      final base64String = base64Encode(bytes);
+                                      setModalState(() {
+                                        _mealImageController.text = "data:image/jpeg;base64,$base64String";
+                                      });
+                                    }
+                                  },
+                                ),
                               ),
                             ),
+                            if (_mealImageController.text.isNotEmpty) ...[
+                              const SizedBox(height: 12),
+                              Center(
+                                child: Container(
+                                  width: 110,
+                                  height: 110,
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(16),
+                                    border: Border.all(color: Colors.white12, width: 2),
+                                    boxShadow: const [
+                                      BoxShadow(
+                                        color: Colors.black26,
+                                        blurRadius: 8,
+                                        offset: Offset(0, 4),
+                                      ),
+                                    ],
+                                  ),
+                                  clipBehavior: Clip.antiAlias,
+                                  child: FirebaseService.buildFoodImage(
+                                    _mealImageController.text,
+                                    width: 110,
+                                    height: 110,
+                                    fit: BoxFit.cover,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ],
                         ),
                       ),
@@ -485,7 +536,7 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
       category: _selectedCategory,
       rating: 4.8,
       stock: stock,
-      restaurantOwnerId: _activeUser?.uid ?? '',
+      restaurantOwnerId: _activeOwnerId,
     );
 
     final error = await FirebaseService.addFoodItem(newMeal);
@@ -742,12 +793,12 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
               final allOrders = orderSnapshot.data ?? [];
               final orders = (isAdmin || isSupport || isSupportManager)
                   ? allOrders
-                  : allOrders.where((o) => o.items.any((item) => item.foodItem.restaurantOwnerId == user.uid)).toList();
+                  : allOrders.where((o) => o.items.any((item) => item.foodItem.restaurantOwnerId == _activeOwnerId)).toList();
 
               final rawMeals = foodSnapshot.data ?? [];
               final meals = (isAdmin || isSupport || isSupportManager)
                   ? rawMeals
-                  : rawMeals.where((m) => m.restaurantOwnerId == user.uid).toList();
+                  : rawMeals.where((m) => m.restaurantOwnerId == _activeOwnerId).toList();
 
               // Calculate metrics on the fly!
               double platformRevenue = 0.0;
@@ -1144,17 +1195,11 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
           clipBehavior: Clip.antiAlias,
           child: Row(
             children: [
-              Image.network(
+              FirebaseService.buildFoodImage(
                 meal.imageUrl,
                 width: 90,
                 height: 90,
                 fit: BoxFit.cover,
-                errorBuilder: (c, e, s) => Container(
-                  color: Colors.white10,
-                  width: 90,
-                  height: 90,
-                  child: const Icon(Icons.fastfood, color: Colors.white24),
-                ),
               ),
               const SizedBox(width: 14),
               Expanded(
@@ -2403,7 +2448,7 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
             ),
           ),
           StreamBuilder<List<RestaurantBranch>>(
-            stream: FirebaseService.streamBranches(user.uid),
+            stream: FirebaseService.streamBranches(_activeOwnerId),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(child: Padding(
@@ -2748,7 +2793,8 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
                               isActive: true,
                             );
 
-                            final err = await FirebaseService.saveBranch(user.uid, newBranch);
+                            final ownerId = user.restaurantOwnerId.isNotEmpty ? user.restaurantOwnerId : user.uid;
+                            final err = await FirebaseService.saveBranch(ownerId, newBranch);
                             if (context.mounted) {
                               Navigator.of(context).pop();
                               if (err != null) {
@@ -3083,7 +3129,8 @@ class _RestaurantDashboardState extends State<RestaurantDashboard> {
     if (confirm == true) {
       final user = FirebaseService.currentUser;
       if (user != null) {
-        final err = await FirebaseService.deleteBranch(user.uid, b.id);
+        final ownerId = user.restaurantOwnerId.isNotEmpty ? user.restaurantOwnerId : user.uid;
+        final err = await FirebaseService.deleteBranch(ownerId, b.id);
         if (err != null && mounted) {
           _showFeedbackDialog("Hata", "Şube silinemedi: $err", isError: true);
         }

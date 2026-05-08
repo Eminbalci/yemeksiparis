@@ -18,6 +18,7 @@ class UserModel {
   final String restaurantLogo;
   final String restaurantDescription;
   final double maxDeliveryDistance; // in kilometers (km)
+  final String restaurantOwnerId; // Points to the main restaurant owner's UID if this user is a manager/employee
 
   UserModel({
     required this.uid,
@@ -35,6 +36,7 @@ class UserModel {
     this.restaurantLogo = '',
     this.restaurantDescription = '',
     this.maxDeliveryDistance = 5.0, // Default 5.0 km
+    this.restaurantOwnerId = '',
   });
 
   UserModel copyWith({
@@ -51,6 +53,7 @@ class UserModel {
     double? maxDeliveryDistance,
     String? role,
     String? status,
+    String? restaurantOwnerId,
   }) {
     return UserModel(
       uid: uid,
@@ -68,6 +71,7 @@ class UserModel {
       restaurantLogo: restaurantLogo ?? this.restaurantLogo,
       restaurantDescription: restaurantDescription ?? this.restaurantDescription,
       maxDeliveryDistance: maxDeliveryDistance ?? this.maxDeliveryDistance,
+      restaurantOwnerId: restaurantOwnerId ?? this.restaurantOwnerId,
     );
   }
 
@@ -88,6 +92,7 @@ class UserModel {
       'restaurantLogo': restaurantLogo,
       'restaurantDescription': restaurantDescription,
       'maxDeliveryDistance': maxDeliveryDistance,
+      'restaurantOwnerId': restaurantOwnerId,
     };
   }
 
@@ -108,6 +113,7 @@ class UserModel {
       restaurantLogo: map['restaurantLogo'] ?? '',
       restaurantDescription: map['restaurantDescription'] ?? '',
       maxDeliveryDistance: (map['maxDeliveryDistance'] as num?)?.toDouble() ?? 5.0,
+      restaurantOwnerId: map['restaurantOwnerId'] ?? '',
     );
   }
 }
@@ -279,6 +285,7 @@ class RestaurantBranch {
   final String address;
   final String phone;
   final bool isActive;
+  final String restaurantOwnerId; // Crucial back-link to the parent restaurant owner
 
   RestaurantBranch({
     required this.id,
@@ -286,6 +293,7 @@ class RestaurantBranch {
     required this.address,
     required this.phone,
     this.isActive = true,
+    this.restaurantOwnerId = '',
   });
 
   Map<String, dynamic> toMap() => {
@@ -294,6 +302,7 @@ class RestaurantBranch {
     'address': address,
     'phone': phone,
     'isActive': isActive,
+    'restaurantOwnerId': restaurantOwnerId,
   };
 
   factory RestaurantBranch.fromMap(Map<String, dynamic> map) => RestaurantBranch(
@@ -302,6 +311,7 @@ class RestaurantBranch {
     address: map['address'] ?? '',
     phone: map['phone'] ?? '',
     isActive: map['isActive'] ?? true,
+    restaurantOwnerId: map['restaurantOwnerId'] ?? '',
   );
 }
 
